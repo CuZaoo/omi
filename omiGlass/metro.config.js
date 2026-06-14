@@ -2,6 +2,10 @@ const { getDefaultConfig } = require('expo/metro-config');
 const { scanWindowsWifi } = require('./scripts/local-wifi.cjs');
 
 const config = getDefaultConfig(__dirname);
+config.resolver.blockList = [
+    ...(Array.isArray(config.resolver.blockList) ? config.resolver.blockList : []),
+    /firmware[\\/]\.pio[\\/].*/,
+];
 
 const defaultEnhanceMiddleware = config.server?.enhanceMiddleware;
 config.server = {

@@ -1,6 +1,7 @@
 import { PhotoAssembler, decodeCaptureStatus, encodeIntervalCapture, encodeSingleCapture, encodeStopCapture } from '../sources/modules/photoProtocol';
 import { canEnqueueAnalysis, responseText } from '../sources/modules/providers';
 import { retainRecentSessions } from '../sources/modules/sessionStorage';
+import { ANTI_GREEN_CAMERA_SETTINGS, encodeCameraSetting } from '../sources/modules/useDebug';
 import { RECONNECT_DELAYS, findStoredDevice } from '../sources/modules/useDevice';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -18,6 +19,10 @@ equal(Array.from(encodeStopCapture()), [0], 'legacy-compatible stop capture comm
 equal(Array.from(encodeIntervalCapture(30)), [30], 'legacy-compatible interval command');
 equal(Array.from(encodeIntervalCapture(300)), [3, 44, 1], '300 second interval command');
 equal(decodeCaptureStatus(new Uint8Array([2, 30, 0])), { mode: 'interval', intervalSeconds: 30 }, 'capture status');
+equal(Array.from(encodeCameraSetting('brightness', -2)), [0x03, 0xfe], 'signed camera setting');
+equal(Array.from(encodeCameraSetting('aecValue', 1200)), [0x07, 0xb0, 0x04], '16-bit exposure setting');
+equal(Array.from(encodeCameraSetting('wbMode', 3)), [0x0f, 0x03], 'office white balance setting');
+assert(ANTI_GREEN_CAMERA_SETTINGS.wbMode === 3 && ANTI_GREEN_CAMERA_SETTINGS.saturation === -1, 'anti-green preset');
 
 const assembler = new PhotoAssembler(true);
 assert(assembler.push(0, new Uint8Array([2, 10, 11])) === null, 'first packet should not complete');

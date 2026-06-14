@@ -123,6 +123,33 @@ The current design does not include a switch. See the contribution section for h
   </Step>
 </Steps>
 
+## Optical Lab Console
+
+The web app opens directly into the Optical Lab workspace. The device connection is a header control, so camera history,
+model settings, diagnostics, and restored sessions remain available while the glasses are disconnected.
+
+- **Optical feed** shows the selected frame and controls single or interval capture from 5 to 300 seconds.
+- **Pipeline** tracks BLE transfer, frame assembly, local persistence, vision analysis, and reasoning for every frame.
+- **AI assistant** answers questions about the selected frame. Manual analysis is the default; automatic analysis can be enabled per browser.
+- **Advanced controls** contain camera tuning, provider/model settings, device information, connection tests, and sanitized logs.
+
+The browser restores an already-authorized OMI Glass with `navigator.bluetooth.getDevices()` and retries unexpected
+disconnects after 1, 2, and 4 seconds. The latest 10 sessions are stored in IndexedDB with up to 200 frames each.
+
+<Warning>
+  `EXPO_PUBLIC_OPENAI_API_KEY` and `EXPO_PUBLIC_GROQ_API_KEY` are embedded in the browser bundle. Cloud providers in this
+  console are for local development only. Do not publicly deploy a build containing these keys.
+</Warning>
+
+### Camera-to-LLM modes
+
+| Mode | Flow |
+| --- | --- |
+| Staged | OMI Glass camera → BLE frame → Ollama or OpenAI vision description → Groq, OpenAI, or Ollama reasoning |
+| Direct | OMI Glass camera → BLE frame → OpenAI Responses API multimodal input |
+
+OpenAI image requests use the Responses API with `input_image`. Ollama uses its `/api/chat` endpoint with a base64 image.
+
 ---
 
 ## Hardware Assembly

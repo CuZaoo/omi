@@ -100,7 +100,8 @@ camera_fb_t *fb = nullptr;
 image_orientation_t current_photo_orientation = ORIENTATION_0_DEGREES;
 
 // Forward declarations
-void handlePhotoControl(int8_t controlValue);
+void handlePhotoControl(const uint8_t *data, size_t len);
+void notifyPhotoControlStatus(uint8_t mode, uint16_t intervalSeconds);
 void handleCameraControl(uint8_t *data, size_t len);
 void readBatteryLevel();
 void updateBatteryService();
@@ -482,12 +483,12 @@ class PhotoControlCallback : public BLECharacteristicCallbacks
 {
     void onWrite(BLECharacteristic *characteristic) override
     {
-        if (characteristic->getLength() == 1) {
-            int8_t received = characteristic->getData()[0];
-            Serial.print("PhotoControl received: ");
-            Serial.println(received);
+        size_t len = characteristic->getLength();
+        if (len > 0) {
+            const uint8_t *data = characteristic->getData();
+            Serial.printf("PhotoControl received: command=0x%02x len=%u\n", data[0], (unsigned int) len);
             lastActivity = millis(); // Register activity - prevents sleep
-            handlePhotoControl(received);
+            handlePhotoControl(data, len);
         }
     }
 };
@@ -634,14 +635,18 @@ void configure_ble()
     photoDataCharacteristic->addDescriptor(ccc);
 
     // Photo Control characteristic
-    photoControlCharacteristic = service->createCharacteristic(photoControlUUID, BLECharacteristic::PROPERTY_WRITE);
+    photoControlCharacteristic = service->createCharacteristic(
+        photoControlUUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
     photoControlCharacteristic->setCallbacks(new PhotoControlCallback());
-    uint8_t controlValue = 0;
-    photoControlCharacteristic->setValue(&controlValue, 1);
+    BLE2902 *photoControlCcc = new BLE2902();
+    photoControlCcc->setNotifications(true);
+    photoControlCharacteristic->addDescriptor(photoControlCcc);
+    uint8_t photoControlStatus[] = {PHOTO_STATUS_STOPPED, 0, 0};
+    photoControlCharacteristic->setValue(photoControlStatus, sizeof(photoControlStatus));
 
     // Camera Control characteristic (for live camera tuning from debug UI)
-    cameraControlCharacteristic = service->createCharacteristic(
-        cameraControlUUID, BLECharacteristic::PROPERTY_WRITE);
+    cameraControlCharacteristic = service->createCharacteristic(cameraControlUUID, BLECharacteristic::PROPERTY_WRITE);
     cameraControlCharacteristic->setCallbacks(new CameraControlCallback());
 
     // Battery Service
@@ -748,28 +753,75 @@ bool take_photo()
     return true;
 }
 
-void handlePhotoControl(int8_t controlValue)
+void notifyPhotoControlStatus(uint8_t mode, uint16_t intervalSeconds)
 {
-    if (controlValue == -1) {
+    if (photoControlCharacteristic == nullptr) {
+        return;
+    }
+    uint8_t status[] = {
+        mode,
+        (uint8_t) (intervalSeconds & 0xFF),
+        (uint8_t) ((intervalSeconds >> 8) & 0xFF),
+    };
+    photoControlCharacteristic->setValue(status, sizeof(status));
+    if (connected) {
+        photoControlCharacteristic->notify();
+    }
+}
+
+void handlePhotoControl(const uint8_t *data, size_t len)
+{
+    if (len == 0) {
+        return;
+    }
+
+    // Legacy protocol: 0xFF=single, 0x00=stop, 5..127=start interval capture.
+    if (len == 1 && data[0] == 0xFF) {
         Serial.println("Received command: Single photo.");
         isCapturingPhotos = true;
         captureInterval = 0;
-    } else if (controlValue == 0) {
+        notifyPhotoControlStatus(PHOTO_STATUS_SINGLE, 0);
+        return;
+    }
+    if (len == 1 && data[0] == 0) {
         Serial.println("Received command: Stop photo capture.");
         isCapturingPhotos = false;
         captureInterval = 0;
-    } else if (controlValue >= 5 && controlValue <= 300) {
+        notifyPhotoControlStatus(PHOTO_STATUS_STOPPED, 0);
+        return;
+    }
+    if (len == 1 && data[0] >= 5 && data[0] <= 127) {
         Serial.print("Received command: Start interval capture with parameter ");
-        Serial.println(controlValue);
-
-        // Use fixed interval from config for optimal battery life
-        captureInterval = PHOTO_CAPTURE_INTERVAL_MS;
-        Serial.print("Using configured interval: ");
-        Serial.print(captureInterval / 1000);
-        Serial.println(" seconds");
-
+        Serial.println(data[0]);
+        captureInterval = data[0] * 1000;
         isCapturingPhotos = true;
         lastCaptureTime = millis() - captureInterval;
+        notifyPhotoControlStatus(PHOTO_STATUS_INTERVAL, data[0]);
+        return;
+    }
+
+    if (len < 3) {
+        Serial.println("PhotoControl: invalid v2 command length");
+        return;
+    }
+
+    uint8_t command = data[0];
+    uint16_t intervalSeconds = data[1] | (data[2] << 8);
+    if (command == PHOTO_CMD_SINGLE) {
+        isCapturingPhotos = true;
+        captureInterval = 0;
+        notifyPhotoControlStatus(PHOTO_STATUS_SINGLE, 0);
+    } else if (command == PHOTO_CMD_STOP) {
+        isCapturingPhotos = false;
+        captureInterval = 0;
+        notifyPhotoControlStatus(PHOTO_STATUS_STOPPED, 0);
+    } else if (command == PHOTO_CMD_INTERVAL && intervalSeconds >= 5 && intervalSeconds <= 300) {
+        captureInterval = intervalSeconds * 1000;
+        isCapturingPhotos = true;
+        lastCaptureTime = millis() - captureInterval;
+        notifyPhotoControlStatus(PHOTO_STATUS_INTERVAL, intervalSeconds);
+    } else {
+        Serial.printf("PhotoControl: invalid command=0x%02x interval=%u\n", command, intervalSeconds);
     }
 }
 
@@ -778,7 +830,8 @@ void handlePhotoControl(int8_t controlValue)
 // -------------------------------------------------------------------------
 void handleCameraControl(uint8_t *data, size_t len)
 {
-    if (len < 2) return;
+    if (len < 2)
+        return;
 
     sensor_t *s = esp_camera_sensor_get();
     if (!s) {
@@ -789,74 +842,75 @@ void handleCameraControl(uint8_t *data, size_t len)
     uint8_t cmd = data[0];
     int32_t val;
     switch (cmd) {
-        case CAM_CMD_SET_FRAMESIZE:
-            val = data[1];
-            s->set_framesize(s, (framesize_t)val);
-            Serial.printf("Camera: framesize=%d\n", val);
-            break;
-        case CAM_CMD_SET_QUALITY:
-            val = data[1];
-            s->set_quality(s, val);
-            Serial.printf("Camera: quality=%d\n", val);
-            break;
-        case CAM_CMD_SET_BRIGHTNESS:
-            val = (int8_t)data[1];
-            s->set_brightness(s, val);
-            Serial.printf("Camera: brightness=%d\n", val);
-            break;
-        case CAM_CMD_SET_CONTRAST:
-            val = (int8_t)data[1];
-            s->set_contrast(s, val);
-            Serial.printf("Camera: contrast=%d\n", val);
-            break;
-        case CAM_CMD_SET_SATURATION:
-            val = (int8_t)data[1];
-            s->set_saturation(s, val);
-            Serial.printf("Camera: saturation=%d\n", val);
-            break;
-        case CAM_CMD_SET_AE_LEVEL:
-            val = (int8_t)data[1];
-            s->set_ae_level(s, val);
-            Serial.printf("Camera: ae_level=%d\n", val);
-            break;
-        case CAM_CMD_SET_AEC_VALUE:
-            if (len < 3) return;
-            val = data[1] | (data[2] << 8);
-            s->set_aec_value(s, val);
-            Serial.printf("Camera: aec_value=%d\n", val);
-            break;
-        case CAM_CMD_SET_GAINCEILING:
-            val = data[1];
-            s->set_gainceiling(s, (gainceiling_t)val);
-            Serial.printf("Camera: gainceiling=%d\n", val);
-            break;
-        case CAM_CMD_SET_WHITEBAL:
-            s->set_whitebal(s, data[1]);
-            Serial.printf("Camera: whitebal=%d\n", data[1]);
-            break;
-        case CAM_CMD_SET_AWB_GAIN:
-            s->set_awb_gain(s, data[1]);
-            Serial.printf("Camera: awb_gain=%d\n", data[1]);
-            break;
-        case CAM_CMD_SET_HMIRROR:
-            s->set_hmirror(s, data[1]);
-            Serial.printf("Camera: hmirror=%d\n", data[1]);
-            break;
-        case CAM_CMD_SET_VFLIP:
-            s->set_vflip(s, data[1]);
-            Serial.printf("Camera: vflip=%d\n", data[1]);
-            break;
-        case CAM_CMD_SET_AEC:
-            s->set_exposure_ctrl(s, data[1]);
-            Serial.printf("Camera: aec=%d\n", data[1]);
-            break;
-        case CAM_CMD_SET_AGC:
-            s->set_gain_ctrl(s, data[1]);
-            Serial.printf("Camera: agc=%d\n", data[1]);
-            break;
-        default:
-            Serial.printf("Camera: unknown cmd 0x%02x\n", cmd);
-            break;
+    case CAM_CMD_SET_FRAMESIZE:
+        val = data[1];
+        s->set_framesize(s, (framesize_t) val);
+        Serial.printf("Camera: framesize=%d\n", val);
+        break;
+    case CAM_CMD_SET_QUALITY:
+        val = data[1];
+        s->set_quality(s, val);
+        Serial.printf("Camera: quality=%d\n", val);
+        break;
+    case CAM_CMD_SET_BRIGHTNESS:
+        val = (int8_t) data[1];
+        s->set_brightness(s, val);
+        Serial.printf("Camera: brightness=%d\n", val);
+        break;
+    case CAM_CMD_SET_CONTRAST:
+        val = (int8_t) data[1];
+        s->set_contrast(s, val);
+        Serial.printf("Camera: contrast=%d\n", val);
+        break;
+    case CAM_CMD_SET_SATURATION:
+        val = (int8_t) data[1];
+        s->set_saturation(s, val);
+        Serial.printf("Camera: saturation=%d\n", val);
+        break;
+    case CAM_CMD_SET_AE_LEVEL:
+        val = (int8_t) data[1];
+        s->set_ae_level(s, val);
+        Serial.printf("Camera: ae_level=%d\n", val);
+        break;
+    case CAM_CMD_SET_AEC_VALUE:
+        if (len < 3)
+            return;
+        val = data[1] | (data[2] << 8);
+        s->set_aec_value(s, val);
+        Serial.printf("Camera: aec_value=%d\n", val);
+        break;
+    case CAM_CMD_SET_GAINCEILING:
+        val = data[1];
+        s->set_gainceiling(s, (gainceiling_t) val);
+        Serial.printf("Camera: gainceiling=%d\n", val);
+        break;
+    case CAM_CMD_SET_WHITEBAL:
+        s->set_whitebal(s, data[1]);
+        Serial.printf("Camera: whitebal=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_AWB_GAIN:
+        s->set_awb_gain(s, data[1]);
+        Serial.printf("Camera: awb_gain=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_HMIRROR:
+        s->set_hmirror(s, data[1]);
+        Serial.printf("Camera: hmirror=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_VFLIP:
+        s->set_vflip(s, data[1]);
+        Serial.printf("Camera: vflip=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_AEC:
+        s->set_exposure_ctrl(s, data[1]);
+        Serial.printf("Camera: aec=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_AGC:
+        s->set_gain_ctrl(s, data[1]);
+        Serial.printf("Camera: agc=%d\n", data[1]);
+        break;
+    default:
+        Serial.printf("Camera: unknown cmd 0x%02x\n", cmd);
+        break;
     }
 }
 
@@ -1060,6 +1114,7 @@ void loop_app()
             if (captureInterval == 0) {
                 // Single shot if interval=0
                 isCapturingPhotos = false;
+                notifyPhotoControlStatus(PHOTO_STATUS_STOPPED, 0);
             }
             Serial.println("Interval reached. Capturing photo...");
             if (take_photo()) {

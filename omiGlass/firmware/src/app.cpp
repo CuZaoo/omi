@@ -844,45 +844,61 @@ void handleCameraControl(uint8_t *data, size_t len)
     switch (cmd) {
     case CAM_CMD_SET_FRAMESIZE:
         val = data[1];
-        s->set_framesize(s, (framesize_t) val);
-        Serial.printf("Camera: framesize=%d\n", val);
+        if (val <= FRAMESIZE_UXGA) {
+            s->set_framesize(s, (framesize_t) val);
+            Serial.printf("Camera: framesize=%d\n", val);
+        }
         break;
     case CAM_CMD_SET_QUALITY:
         val = data[1];
-        s->set_quality(s, val);
-        Serial.printf("Camera: quality=%d\n", val);
+        if (val >= 10 && val <= 63) {
+            s->set_quality(s, val);
+            Serial.printf("Camera: quality=%d\n", val);
+        }
         break;
     case CAM_CMD_SET_BRIGHTNESS:
         val = (int8_t) data[1];
-        s->set_brightness(s, val);
-        Serial.printf("Camera: brightness=%d\n", val);
+        if (val >= -2 && val <= 2) {
+            s->set_brightness(s, val);
+            Serial.printf("Camera: brightness=%d\n", val);
+        }
         break;
     case CAM_CMD_SET_CONTRAST:
         val = (int8_t) data[1];
-        s->set_contrast(s, val);
-        Serial.printf("Camera: contrast=%d\n", val);
+        if (val >= -2 && val <= 2) {
+            s->set_contrast(s, val);
+            Serial.printf("Camera: contrast=%d\n", val);
+        }
         break;
     case CAM_CMD_SET_SATURATION:
         val = (int8_t) data[1];
-        s->set_saturation(s, val);
-        Serial.printf("Camera: saturation=%d\n", val);
+        if (val >= -2 && val <= 2) {
+            s->set_saturation(s, val);
+            Serial.printf("Camera: saturation=%d\n", val);
+        }
         break;
     case CAM_CMD_SET_AE_LEVEL:
         val = (int8_t) data[1];
-        s->set_ae_level(s, val);
-        Serial.printf("Camera: ae_level=%d\n", val);
+        if (val >= -2 && val <= 2) {
+            s->set_ae_level(s, val);
+            Serial.printf("Camera: ae_level=%d\n", val);
+        }
         break;
     case CAM_CMD_SET_AEC_VALUE:
         if (len < 3)
             return;
         val = data[1] | (data[2] << 8);
-        s->set_aec_value(s, val);
-        Serial.printf("Camera: aec_value=%d\n", val);
+        if (val <= 1200) {
+            s->set_aec_value(s, val);
+            Serial.printf("Camera: aec_value=%d\n", val);
+        }
         break;
     case CAM_CMD_SET_GAINCEILING:
         val = data[1];
-        s->set_gainceiling(s, (gainceiling_t) val);
-        Serial.printf("Camera: gainceiling=%d\n", val);
+        if (val <= 6) {
+            s->set_gainceiling(s, (gainceiling_t) val);
+            Serial.printf("Camera: gainceiling=%d\n", val);
+        }
         break;
     case CAM_CMD_SET_WHITEBAL:
         s->set_whitebal(s, data[1]);
@@ -907,6 +923,52 @@ void handleCameraControl(uint8_t *data, size_t len)
     case CAM_CMD_SET_AGC:
         s->set_gain_ctrl(s, data[1]);
         Serial.printf("Camera: agc=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_WB_MODE:
+        if (data[1] <= 4) {
+            s->set_wb_mode(s, data[1]);
+            Serial.printf("Camera: wb_mode=%d\n", data[1]);
+        }
+        break;
+    case CAM_CMD_SET_AGC_GAIN:
+        if (data[1] <= 30) {
+            s->set_agc_gain(s, data[1]);
+            Serial.printf("Camera: agc_gain=%d\n", data[1]);
+        }
+        break;
+    case CAM_CMD_SET_AEC2:
+        s->set_aec2(s, data[1] ? 1 : 0);
+        Serial.printf("Camera: aec2=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_EFFECT:
+        if (data[1] <= 6) {
+            s->set_special_effect(s, data[1]);
+            Serial.printf("Camera: effect=%d\n", data[1]);
+        }
+        break;
+    case CAM_CMD_SET_BPC:
+        s->set_bpc(s, data[1] ? 1 : 0);
+        Serial.printf("Camera: bpc=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_WPC:
+        s->set_wpc(s, data[1] ? 1 : 0);
+        Serial.printf("Camera: wpc=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_RAW_GMA:
+        s->set_raw_gma(s, data[1] ? 1 : 0);
+        Serial.printf("Camera: raw_gma=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_LENC:
+        s->set_lenc(s, data[1] ? 1 : 0);
+        Serial.printf("Camera: lenc=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_DCW:
+        s->set_dcw(s, data[1] ? 1 : 0);
+        Serial.printf("Camera: dcw=%d\n", data[1]);
+        break;
+    case CAM_CMD_SET_COLORBAR:
+        s->set_colorbar(s, data[1] ? 1 : 0);
+        Serial.printf("Camera: colorbar=%d\n", data[1]);
         break;
     default:
         Serial.printf("Camera: unknown cmd 0x%02x\n", cmd);

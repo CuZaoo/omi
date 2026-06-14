@@ -132,6 +132,12 @@ model settings, diagnostics, and restored sessions remain available while the gl
 - **Pipeline** tracks BLE transfer, frame assembly, local persistence, vision analysis, and reasoning for every frame.
 - **AI assistant** answers questions about the selected frame. Manual analysis is the default; automatic analysis can be enabled per browser.
 - **Advanced controls** contain camera tuning, provider/model settings, device information, connection tests, and sanitized logs.
+- **Local WiFi scan** uses the Windows development host to list nearby networks and highlight the computer's current SSID without requiring a BLE scan command. The glasses still require the photo-control characteristic to receive credentials.
+
+<Note>
+  ESP32-S3 supports 2.4 GHz WiFi only. The console marks 5 GHz-only networks as unsupported. Browsers cannot read WiFi
+  SSIDs directly, so local scanning is exposed only by the Expo development server and is not available in a static public build.
+</Note>
 
 ### Camera controls
 

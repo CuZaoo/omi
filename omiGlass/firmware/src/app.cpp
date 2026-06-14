@@ -58,6 +58,9 @@ static BLEUUID otaServiceUUID(OTA_SERVICE_UUID);
 static BLEUUID otaControlUUID(OTA_CONTROL_UUID);
 static BLEUUID otaDataUUID(OTA_DATA_UUID);
 
+// Camera Control UUID
+static BLEUUID cameraControlUUID(CAMERA_CONTROL_UUID);
+
 // Characteristics
 BLECharacteristic *photoDataCharacteristic;
 BLECharacteristic *photoControlCharacteristic;
@@ -66,6 +69,7 @@ BLECharacteristic *audioDataCharacteristic;
 BLECharacteristic *audioCodecCharacteristic;
 BLECharacteristic *otaControlCharacteristic;
 BLECharacteristic *otaDataCharacteristic;
+BLECharacteristic *cameraControlCharacteristic;
 
 // Audio state
 bool audioEnabled = true;
@@ -97,6 +101,7 @@ image_orientation_t current_photo_orientation = ORIENTATION_0_DEGREES;
 
 // Forward declarations
 void handlePhotoControl(int8_t controlValue);
+void handleCameraControl(uint8_t *data, size_t len);
 void readBatteryLevel();
 void updateBatteryService();
 void IRAM_ATTR buttonISR();
@@ -504,6 +509,19 @@ class OTAControlCallback : public BLECharacteristicCallbacks
     }
 };
 
+class CameraControlCallback : public BLECharacteristicCallbacks
+{
+    void onWrite(BLECharacteristic *pChar) override
+    {
+        size_t len = pChar->getLength();
+        uint8_t *data = pChar->getData();
+        if (len > 0) {
+            lastActivity = millis();
+            handleCameraControl(data, len);
+        }
+    }
+};
+
 // -------------------------------------------------------------------------
 // Battery Functions
 // -------------------------------------------------------------------------
@@ -621,6 +639,11 @@ void configure_ble()
     uint8_t controlValue = 0;
     photoControlCharacteristic->setValue(&controlValue, 1);
 
+    // Camera Control characteristic (for live camera tuning from debug UI)
+    cameraControlCharacteristic = service->createCharacteristic(
+        cameraControlUUID, BLECharacteristic::PROPERTY_WRITE);
+    cameraControlCharacteristic->setCallbacks(new CameraControlCallback());
+
     // Battery Service
     BLEService *batteryService = server->createService(BATTERY_SERVICE_UUID);
     batteryLevelCharacteristic = batteryService->createCharacteristic(
@@ -684,7 +707,9 @@ void configure_ble()
 
     // Start advertising
     BLEAdvertising *advertising = BLEDevice::getAdvertising();
-    advertising->addServiceUUID(service->getUUID()); // Main service (fits in 31 bytes)
+    // Note: service UUID and name together (18+11=29 bytes + 3 flags = 32 bytes)
+    // exceed the 31-byte BLE advertising limit. We put the name in the
+    // advertisement (so Web Bluetooth can find it) and the UUID in scan response.
     advertising->setScanResponse(true);
     advertising->setMinPreferred(BLE_ADV_MIN_INTERVAL);
     advertising->setMaxPreferred(BLE_ADV_MAX_INTERVAL);
@@ -749,6 +774,93 @@ void handlePhotoControl(int8_t controlValue)
 }
 
 // -------------------------------------------------------------------------
+// handleCameraControl()
+// -------------------------------------------------------------------------
+void handleCameraControl(uint8_t *data, size_t len)
+{
+    if (len < 2) return;
+
+    sensor_t *s = esp_camera_sensor_get();
+    if (!s) {
+        Serial.println("Camera control: sensor not available");
+        return;
+    }
+
+    uint8_t cmd = data[0];
+    int32_t val;
+    switch (cmd) {
+        case CAM_CMD_SET_FRAMESIZE:
+            val = data[1];
+            s->set_framesize(s, (framesize_t)val);
+            Serial.printf("Camera: framesize=%d\n", val);
+            break;
+        case CAM_CMD_SET_QUALITY:
+            val = data[1];
+            s->set_quality(s, val);
+            Serial.printf("Camera: quality=%d\n", val);
+            break;
+        case CAM_CMD_SET_BRIGHTNESS:
+            val = (int8_t)data[1];
+            s->set_brightness(s, val);
+            Serial.printf("Camera: brightness=%d\n", val);
+            break;
+        case CAM_CMD_SET_CONTRAST:
+            val = (int8_t)data[1];
+            s->set_contrast(s, val);
+            Serial.printf("Camera: contrast=%d\n", val);
+            break;
+        case CAM_CMD_SET_SATURATION:
+            val = (int8_t)data[1];
+            s->set_saturation(s, val);
+            Serial.printf("Camera: saturation=%d\n", val);
+            break;
+        case CAM_CMD_SET_AE_LEVEL:
+            val = (int8_t)data[1];
+            s->set_ae_level(s, val);
+            Serial.printf("Camera: ae_level=%d\n", val);
+            break;
+        case CAM_CMD_SET_AEC_VALUE:
+            if (len < 3) return;
+            val = data[1] | (data[2] << 8);
+            s->set_aec_value(s, val);
+            Serial.printf("Camera: aec_value=%d\n", val);
+            break;
+        case CAM_CMD_SET_GAINCEILING:
+            val = data[1];
+            s->set_gainceiling(s, (gainceiling_t)val);
+            Serial.printf("Camera: gainceiling=%d\n", val);
+            break;
+        case CAM_CMD_SET_WHITEBAL:
+            s->set_whitebal(s, data[1]);
+            Serial.printf("Camera: whitebal=%d\n", data[1]);
+            break;
+        case CAM_CMD_SET_AWB_GAIN:
+            s->set_awb_gain(s, data[1]);
+            Serial.printf("Camera: awb_gain=%d\n", data[1]);
+            break;
+        case CAM_CMD_SET_HMIRROR:
+            s->set_hmirror(s, data[1]);
+            Serial.printf("Camera: hmirror=%d\n", data[1]);
+            break;
+        case CAM_CMD_SET_VFLIP:
+            s->set_vflip(s, data[1]);
+            Serial.printf("Camera: vflip=%d\n", data[1]);
+            break;
+        case CAM_CMD_SET_AEC:
+            s->set_exposure_ctrl(s, data[1]);
+            Serial.printf("Camera: aec=%d\n", data[1]);
+            break;
+        case CAM_CMD_SET_AGC:
+            s->set_gain_ctrl(s, data[1]);
+            Serial.printf("Camera: agc=%d\n", data[1]);
+            break;
+        default:
+            Serial.printf("Camera: unknown cmd 0x%02x\n", cmd);
+            break;
+    }
+}
+
+// -------------------------------------------------------------------------
 // configure_camera()
 // -------------------------------------------------------------------------
 void configure_camera()
@@ -788,6 +900,34 @@ void configure_camera()
         Serial.printf("Camera init failed with error 0x%x\n", err);
     } else {
         Serial.println("Camera initialized successfully.");
+
+        // Post-init sensor configuration for optimal image quality
+        sensor_t *s = esp_camera_sensor_get();
+        if (s) {
+            s->set_framesize(s, CAMERA_FRAME_SIZE);
+            s->set_quality(s, CAMERA_JPEG_QUALITY);
+            s->set_brightness(s, 0);
+            s->set_contrast(s, 0);
+            s->set_saturation(s, 0);
+            s->set_ae_level(s, 0);
+            s->set_aec_value(s, 300);
+            s->set_whitebal(s, 1);
+            s->set_awb_gain(s, 1);
+            s->set_gain_ctrl(s, 1);
+            s->set_exposure_ctrl(s, 1);
+            s->set_agc_gain(s, 0);
+            s->set_gainceiling(s, GAINCEILING_2X);
+            s->set_bpc(s, 0);
+            s->set_wpc(s, 1);
+            s->set_raw_gma(s, 1);
+            s->set_lenc(s, 1);
+            s->set_hmirror(s, 0);
+            s->set_vflip(s, 0);
+            s->set_dcw(s, 1);
+            Serial.println("Sensor configuration applied.");
+        } else {
+            Serial.println("Warning: could not get sensor pointer.");
+        }
     }
 }
 
@@ -831,11 +971,11 @@ void setup_app()
         Serial.println("Chunk buffer allocated successfully.");
     }
 
-    // Set default capture interval from config
-    isCapturingPhotos = true;
+    // Photo capture starts on [0x05] command from app (after BLE subscription)
+    // isCapturingPhotos = true; // Delayed to avoid race with BLE notification subscription
     captureInterval = PHOTO_CAPTURE_INTERVAL_MS;
     lastCaptureTime = millis() - captureInterval;
-    Serial.print("Default capture interval set to ");
+    Serial.print("Capture interval set to ");
     Serial.print(PHOTO_CAPTURE_INTERVAL_MS / 1000);
     Serial.println(" seconds.");
 

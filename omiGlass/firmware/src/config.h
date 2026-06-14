@@ -45,8 +45,8 @@
 // CAMERA CONFIGURATION - Power optimized for 6-8 hour battery life
 // =============================================================================
 #define CAMERA_FRAME_SIZE FRAMESIZE_VGA // 640x480 - optimal balance
-#define CAMERA_JPEG_QUALITY 25          // Slightly higher quality for better compression efficiency
-#define CAMERA_XCLK_FREQ 6000000        // 6MHz - reduced from 8MHz for power savings
+#define CAMERA_JPEG_QUALITY 12          // Higher quality for clearer images
+#define CAMERA_XCLK_FREQ 20000000       // 20MHz - standard OV2640 XCLK frequency
 #define CAMERA_FB_IN_PSRAM CAMERA_FB_IN_PSRAM
 #define CAMERA_GRAB_LATEST CAMERA_GRAB_LATEST
 
@@ -153,6 +153,23 @@ typedef enum {
 #define AUDIO_CODEC_UUID "19B10002-E8F2-537E-4F6C-D104768A1214"
 #define PHOTO_DATA_UUID "19B10005-E8F2-537E-4F6C-D104768A1214"
 #define PHOTO_CONTROL_UUID "19B10006-E8F2-537E-4F6C-D104768A1214"
+#define CAMERA_CONTROL_UUID "19B10007-E8F2-537E-4F6C-D104768A1214"
+
+// Camera Control Commands (written to CAMERA_CONTROL_UUID)
+#define CAM_CMD_SET_FRAMESIZE  0x01  // +1 byte: framesize (0=96x96...10=SVGA)
+#define CAM_CMD_SET_QUALITY    0x02  // +1 byte: JPEG quality (10-63, lower=better)
+#define CAM_CMD_SET_BRIGHTNESS 0x03  // +1 byte: -2 to 2
+#define CAM_CMD_SET_CONTRAST   0x04  // +1 byte: -2 to 2
+#define CAM_CMD_SET_SATURATION 0x05  // +1 byte: -2 to 2
+#define CAM_CMD_SET_AE_LEVEL   0x06  // +1 byte: -2 to 2
+#define CAM_CMD_SET_AEC_VALUE  0x07  // +2 byte LE: 0-1200
+#define CAM_CMD_SET_GAINCEILING 0x08 // +1 byte: 0-6
+#define CAM_CMD_SET_WHITEBAL   0x09  // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_AWB_GAIN   0x0A  // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_HMIRROR    0x0B  // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_VFLIP      0x0C  // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_AEC        0x0D  // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_AGC        0x0E  // +1 byte: 0=off, 1=on
 
 // Battery Service UUID - Cast to uint16_t for BLE compatibility
 #define BATTERY_SERVICE_UUID (uint16_t) 0x180F

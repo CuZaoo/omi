@@ -12,15 +12,20 @@ export interface PhotoPacketResult {
 }
 
 export function encodeSingleCapture(): Uint8Array {
-    return new Uint8Array([PHOTO_COMMAND.single, 0, 0]);
+    // Legacy single-byte commands also work on v2 firmware, so prefer them to
+    // keep the web console compatible with glasses that have not been flashed.
+    return new Uint8Array([0xff]);
 }
 
 export function encodeStopCapture(): Uint8Array {
-    return new Uint8Array([PHOTO_COMMAND.stop, 0, 0]);
+    return new Uint8Array([0x00]);
 }
 
 export function encodeIntervalCapture(seconds: number): Uint8Array {
     const normalized = Math.max(5, Math.min(300, Math.round(seconds)));
+    if (normalized <= 127) {
+        return new Uint8Array([normalized]);
+    }
     return new Uint8Array([PHOTO_COMMAND.interval, normalized & 0xff, (normalized >> 8) & 0xff]);
 }
 

@@ -164,6 +164,16 @@ export const DeviceView = React.memo(({ deviceController }: { deviceController: 
     const glass = useGlassController({ device: deviceController.device, onFrame });
     const [liveStreamRes, setLiveStreamRes] = React.useState<'流畅' | '均衡' | '清晰'>('均衡');
     const [liveStreamActive, setLiveStreamActive] = React.useState(false);
+    const [wifiSsid, setWifiSsid] = React.useState(() => localStorage.getItem('omi:wifiSsid') || '');
+    const [wifiPass, setWifiPass] = React.useState(() => localStorage.getItem('omi:wifiPass') || '');
+    const selectedWifi = glass.scanResults.find(network => network.ssid === wifiSsid);
+    const wifiCompatible = selectedWifi?.compatible !== false;
+
+    React.useEffect(() => {
+        if (glass.currentWifiSsid) {
+            setWifiSsid(glass.currentWifiSsid);
+        }
+    }, [glass.currentWifiSsid]);
 
     const liveStreamResMap: Record<string, { framesize: number; quality: number; intervalMs: number }> = {
         '流畅': { framesize: 0, quality: 18, intervalMs: 800 },
@@ -338,8 +348,15 @@ export const DeviceView = React.memo(({ deviceController }: { deviceController: 
                 <Text style={styles.panelMeta}>{session.frames.length} 帧</Text>
             </View>
             <View style={styles.preview}>
-                {selectedFrame ? (
-                    <Image source={{ uri: toBase64Image(selectedFrame.data) }} style={styles.previewImage} resizeMode="contain" />
+                {glass.stream.status === 0x52 && glass.stream.ip ? (
+                    <Image
+                        key={`stream-${glass.stream.ip}`}
+                        source={{ uri: `http://${glass.stream.ip}/stream` }}
+                        style={styles.previewImage}
+                        resizeMode="contain"
+                    />
+                ) : selectedFrame ? (
+                    <Image key={selectedFrame.id} source={{ uri: toBase64Image(selectedFrame.data) }} style={styles.previewImage} resizeMode="contain" />
                 ) : (
                     <View style={styles.previewEmpty}>
                         <View style={styles.reticle}><View style={styles.reticleInner} /></View>
@@ -361,17 +378,17 @@ export const DeviceView = React.memo(({ deviceController }: { deviceController: 
                     {glass.capture.pending ? <ActivityIndicator color="#65f2e8" /> : <View style={[styles.modeLight, glass.capture.mode === 'interval' && styles.modeLightActive]} />}
                 </View>
                 <View style={styles.intervalRow}>
-                    {[5, 30, 60, 300].map(value => (
+                    {[1, 5, 15, 60].map(value => (
                         <Pressable key={value} onPress={() => setCaptureInterval(value)} style={[styles.intervalButton, captureInterval === value && styles.intervalActive]}>
                             <Text style={[styles.intervalText, captureInterval === value && styles.intervalTextActive]}>{value}s</Text>
                         </Pressable>
                     ))}
                 </View>
                 <View style={styles.captureActions}>
-                    <Pressable disabled={!glass.subscribed || glass.capture.pending} onPress={glass.takePhoto} style={[styles.primaryButton, (!glass.subscribed || glass.capture.pending) && styles.buttonDisabled]}><Text style={styles.primaryButtonText}>拍摄一帧</Text></Pressable>
-                    <Pressable disabled={!glass.subscribed || glass.capture.pending} onPress={glass.captureHiRes} style={[styles.hiresButton, (!glass.subscribed || glass.capture.pending) && styles.buttonDisabled]}><Text style={styles.hiresButtonText}>📷 清晰一拍</Text></Pressable>
-                    <Pressable disabled={!glass.subscribed || glass.capture.pending} onPress={() => glass.startInterval(captureInterval)} style={[styles.secondaryButton, (!glass.subscribed || glass.capture.pending) && styles.buttonDisabled]}><Text style={styles.secondaryButtonText}>启动自动</Text></Pressable>
-                    <Pressable disabled={!glass.subscribed || glass.capture.pending} onPress={glass.stopCapture} style={[styles.stopButton, (!glass.subscribed || glass.capture.pending) && styles.buttonDisabled]}><Text style={styles.stopButtonText}>停止</Text></Pressable>
+                    <Pressable disabled={!glass.captureReady || glass.capture.pending} onPress={glass.takePhoto} style={[styles.primaryButton, (!glass.captureReady || glass.capture.pending) && styles.buttonDisabled]}><Text style={styles.primaryButtonText}>拍摄一帧</Text></Pressable>
+                    <Pressable disabled={!glass.captureReady || glass.capture.pending} onPress={glass.captureHiRes} style={[styles.hiresButton, (!glass.captureReady || glass.capture.pending) && styles.buttonDisabled]}><Text style={styles.hiresButtonText}>📷 清晰一拍</Text></Pressable>
+                    <Pressable disabled={!glass.captureReady || glass.capture.pending} onPress={() => glass.startInterval(captureInterval)} style={[styles.secondaryButton, (!glass.captureReady || glass.capture.pending) && styles.buttonDisabled]}><Text style={styles.secondaryButtonText}>启动自动</Text></Pressable>
+                    <Pressable disabled={!glass.captureReady || glass.capture.pending} onPress={glass.stopCapture} style={[styles.stopButton, (!glass.captureReady || glass.capture.pending) && styles.buttonDisabled]}><Text style={styles.stopButtonText}>停止</Text></Pressable>
                 </View>
                 <View style={styles.liveViewRow}>
                     <View style={styles.liveViewToggle}>
@@ -379,6 +396,7 @@ export const DeviceView = React.memo(({ deviceController }: { deviceController: 
                         <Switch
                             value={liveStreamActive}
                             onValueChange={handleToggleLiveStream}
+                            disabled={!glass.captureReady}
                             trackColor={{ false: '#24373a', true: '#0f5e62' }}
                             thumbColor={liveStreamActive ? '#65f2e8' : '#819597'}
                         />
@@ -390,6 +408,91 @@ export const DeviceView = React.memo(({ deviceController }: { deviceController: 
                     ))}
                 </View>
                 {glass.capture.error ? <Text style={styles.inlineError}>{glass.capture.error}</Text> : null}
+                {glass.stream.status === 0x52 && glass.stream.ip ? (
+                    <View style={styles.wifiStreamInfo}>
+                        <Text style={styles.wifiStreamText}>WiFi 流: http://{glass.stream.ip}/stream</Text>
+                    </View>
+                ) : null}
+                <View style={styles.wifiSection}>
+                    <View style={styles.wifiSectionHeader}>
+                        <Text style={styles.controlEyebrow}>WIFI 视频流</Text>
+                        <Pressable
+                            onPress={glass.scanNetworks}
+                            disabled={glass.scanning}
+                            style={styles.wifiScanBtn}
+                        >
+                            {glass.scanning ? (
+                                <ActivityIndicator color="#8dc7c4" size="small" />
+                            ) : (
+                                <Text style={styles.wifiScanText}>扫描本机 WiFi</Text>
+                            )}
+                        </Pressable>
+                    </View>
+                    <Text style={styles.wifiHint}>网络列表来自当前电脑，不依赖 BLE。选择网络后仍需通过眼镜控制通道写入凭据。</Text>
+                    {glass.currentWifiSsid ? (
+                        <Pressable style={styles.currentWifi} onPress={() => setWifiSsid(glass.currentWifiSsid)}>
+                            <Text style={styles.currentWifiLabel}>本机当前网络</Text>
+                            <Text style={styles.currentWifiName}>{glass.currentWifiSsid}</Text>
+                        </Pressable>
+                    ) : null}
+                    {glass.scanError ? <Text style={styles.wifiError}>{glass.scanError}</Text> : null}
+                    {glass.scanResults.length > 0 ? (
+                        <View style={styles.scanList}>
+                            {glass.scanResults.slice(0, 8).map(entry => (
+                                <Pressable
+                                    key={entry.ssid}
+                                    onPress={() => { setWifiSsid(entry.ssid); }}
+                                    style={styles.scanItem}
+                                >
+                                    <Text style={[styles.scanSsid, entry.compatible === false && styles.scanSsidUnsupported]} numberOfLines={1}>{entry.connected ? '当前 · ' : ''}{entry.ssid}</Text>
+                                    <Text style={[styles.scanRssi, entry.compatible === false && styles.scanRssiUnsupported]}>{entry.compatible === false ? `${entry.band || '5 GHz'} 不支持` : entry.rssi > -50 ? '强' : entry.rssi > -70 ? '中' : '弱'}</Text>
+                                </Pressable>
+                            ))}
+                        </View>
+                    ) : null}
+                    <View style={styles.wifiRow}>
+                        <TextInput
+                            value={wifiSsid}
+                            onChangeText={setWifiSsid}
+                            placeholder="SSID"
+                            placeholderTextColor="#496568"
+                            style={styles.wifiInput}
+                            autoCapitalize="none"
+                        />
+                        <TextInput
+                            value={wifiPass}
+                            onChangeText={setWifiPass}
+                            placeholder="密码"
+                            placeholderTextColor="#496568"
+                            secureTextEntry
+                            style={[styles.wifiInput, styles.wifiInputPass]}
+                            autoCapitalize="none"
+                        />
+                        {glass.stream.status !== 0x52 ? (
+                            <Pressable
+                                disabled={!wifiSsid || !wifiCompatible || !glass.captureReady || glass.stream.status === 0x51}
+                                onPress={() => {
+                                    if (!wifiSsid) return;
+                                    localStorage.setItem('omi:wifiSsid', wifiSsid);
+                                    localStorage.setItem('omi:wifiPass', wifiPass);
+                                    glass.connectWifi(wifiSsid, wifiPass);
+                                }}
+                                style={[styles.wifiConnectBtn, (!wifiCompatible || !glass.captureReady || glass.stream.status === 0x51) && styles.buttonDisabled]}
+                            >
+                                <Text style={styles.wifiConnectText}>
+                                    {glass.stream.status === 0x51 ? '连接中' : !wifiCompatible ? '仅支持 2.4G' : glass.captureReady ? '写入眼镜' : '需更新固件'}
+                                </Text>
+                            </Pressable>
+                        ) : (
+                            <Pressable
+                                onPress={() => { glass.disconnectWifi(); }}
+                                style={[styles.wifiConnectBtn, styles.wifiDisconnectBtn]}
+                            >
+                                <Text style={styles.wifiDisconnectText}>断开</Text>
+                            </Pressable>
+                        )}
+                    </View>
+                </View>
             </View>
         </View>
     );
@@ -537,4 +640,5 @@ const styles = StyleSheet.create({
     modelBadge: { borderWidth: 1, borderColor: '#35575a', paddingHorizontal: 8, paddingVertical: 5 }, modelBadgeText: { color: '#65f2e8', fontSize: 8, letterSpacing: 1, fontFamily: 'Cascadia Mono' }, contextCard: { margin: 10, padding: 12, borderLeftWidth: 2, borderLeftColor: '#e9b65c', backgroundColor: '#17170f' }, contextTitle: { color: '#d6d7bf', fontSize: 11, fontWeight: '700', marginTop: 5 }, contextDescription: { color: '#8f927c', fontSize: 10, lineHeight: 15, marginTop: 6 }, chatScroll: { flex: 1, minHeight: 0 }, chatContent: { padding: 10, gap: 9 }, chatIntro: { minHeight: 220, alignItems: 'center', justifyContent: 'center', padding: 24 }, message: { padding: 11, maxWidth: '92%' }, userMessage: { alignSelf: 'flex-end', backgroundColor: '#153a3c', borderRightWidth: 2, borderRightColor: '#65f2e8' }, assistantMessage: { alignSelf: 'flex-start', backgroundColor: '#111f21', borderLeftWidth: 2, borderLeftColor: '#e9b65c' }, messageRole: { color: '#568487', fontSize: 7, letterSpacing: 1, fontFamily: 'Cascadia Mono', marginBottom: 5 }, messageText: { color: '#c6d4d2', fontSize: 11, lineHeight: 17 }, composer: { minHeight: 78, padding: 10, flexDirection: 'row', gap: 8, borderTopWidth: 1, borderTopColor: '#173135' }, questionInput: { flex: 1, minHeight: 54, maxHeight: 100, backgroundColor: '#071113', borderWidth: 1, borderColor: '#274448', color: '#d9e7e5', padding: 10, textAlignVertical: 'top', fontSize: 11 }, sendButton: { width: 58, backgroundColor: '#e9b65c', alignItems: 'center', justifyContent: 'center' }, sendText: { color: '#171207', fontSize: 10, fontWeight: '800' },
     tabs: { flexDirection: 'row', paddingHorizontal: 10, paddingTop: 10, gap: 6 }, tab: { flex: 1, height: 38, borderWidth: 1, borderColor: '#244347', alignItems: 'center', justifyContent: 'center' }, tabActive: { backgroundColor: '#65f2e8', borderColor: '#65f2e8' }, tabText: { color: '#789294', fontSize: 10, fontWeight: '700' }, tabTextActive: { color: '#061112' },
     footer: { minHeight: 30, paddingHorizontal: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#152d30', backgroundColor: '#071012' }, footerText: { color: '#405f62', fontSize: 8, fontFamily: 'Cascadia Mono' }, footerAction: { color: '#5fb8b4', fontSize: 9, fontWeight: '700' },
+    wifiSection: { borderTopWidth: 1, borderTopColor: '#173135', paddingTop: 12, marginTop: 10 }, wifiSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, wifiScanBtn: { paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#3a6f72' }, wifiScanText: { color: '#8dc7c4', fontSize: 9, fontWeight: '700' }, wifiHint: { color: '#587477', fontSize: 9, lineHeight: 14, marginTop: 7 }, currentWifi: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8, paddingHorizontal: 10, paddingVertical: 8, borderLeftWidth: 2, borderLeftColor: '#65f2e8', backgroundColor: '#0b2224' }, currentWifiLabel: { color: '#6c9293', fontSize: 9 }, currentWifiName: { color: '#65f2e8', fontSize: 10, fontWeight: '700', fontFamily: 'Cascadia Mono' }, wifiError: { color: '#ff9187', backgroundColor: '#291414', borderLeftWidth: 2, borderLeftColor: '#ff6f65', padding: 8, marginTop: 8, fontSize: 9, lineHeight: 14 }, scanList: { marginTop: 8, maxHeight: 140, borderWidth: 1, borderColor: '#1b3f42', backgroundColor: '#060f11' }, scanItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#142e31' }, scanSsid: { color: '#c5d9d7', fontSize: 10, flex: 1 }, scanSsidUnsupported: { color: '#8a7773' }, scanRssi: { color: '#60898b', fontSize: 8, fontFamily: 'Cascadia Mono', marginLeft: 8 }, scanRssiUnsupported: { color: '#d69572' }, wifiRow: { flexDirection: 'row', gap: 6, marginTop: 8 }, wifiInput: { flex: 1, height: 36, backgroundColor: '#071113', borderWidth: 1, borderColor: '#274448', color: '#d9e7e5', paddingHorizontal: 10, fontSize: 11 }, wifiInputPass: { flex: 0.8 }, wifiConnectBtn: { minHeight: 36, paddingHorizontal: 12, backgroundColor: '#65f2e8', alignItems: 'center', justifyContent: 'center' }, wifiConnectText: { color: '#061112', fontSize: 10, fontWeight: '800' }, wifiDisconnectBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#77504a' }, wifiDisconnectText: { color: '#e8a79e', fontSize: 10, fontWeight: '800' }, wifiStreamInfo: { marginTop: 7, padding: 6, backgroundColor: '#0c2224', borderWidth: 1, borderColor: '#26494c' }, wifiStreamText: { color: '#65f2e8', fontSize: 9, fontFamily: 'Cascadia Mono' },
 });

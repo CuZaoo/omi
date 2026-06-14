@@ -133,6 +133,16 @@ model settings, diagnostics, and restored sessions remain available while the gl
 - **AI assistant** answers questions about the selected frame. Manual analysis is the default; automatic analysis can be enabled per browser.
 - **Advanced controls** contain camera tuning, provider/model settings, device information, connection tests, and sanitized logs.
 
+### Camera controls
+
+The advanced drawer exposes every OV2640 option supported by the firmware: resolution, JPEG quality, brightness,
+contrast, saturation, effects, white balance, exposure, gain, corrections, mirroring, flipping, and the test color bar.
+Settings are saved in `localStorage` and can be reapplied after reconnecting.
+
+For a green cast under fluorescent or LED lighting, use **Office anti-green** first. It enables automatic white balance,
+selects office white balance mode, and lowers saturation by one step. Sunny, cloudy, office, and home modes can also be
+selected manually. Sharpness and denoise are not shown because the OV2640 driver reports them as unsupported.
+
 The browser restores an already-authorized OMI Glass with `navigator.bluetooth.getDevices()` and retries unexpected
 disconnects after 1, 2, and 4 seconds. The latest 10 sessions are stored in IndexedDB with up to 200 frames each.
 

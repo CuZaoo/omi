@@ -81,6 +81,10 @@ bool connected = false;
 bool isCapturingPhotos = false;
 int captureInterval = 0; // Interval in ms
 unsigned long lastCaptureTime = 0;
+bool singleShotPending = false; // High-priority single shot
+bool liveStreamActive = false;
+unsigned long liveStreamInterval = 1500;
+int savedQuality = 12; // Restore quality after hi-res capture
 
 // Audio ring buffer for encoded packets
 #define AUDIO_TX_BUFFER_SIZE (AUDIO_TX_RING_BUFFER_SIZE * (OPUS_OUTPUT_MAX_BYTES + 2))
@@ -808,18 +812,61 @@ void handlePhotoControl(const uint8_t *data, size_t len)
     uint8_t command = data[0];
     uint16_t intervalSeconds = data[1] | (data[2] << 8);
     if (command == PHOTO_CMD_SINGLE) {
-        isCapturingPhotos = true;
-        captureInterval = 0;
+        // High-priority single shot - bypasses photoDataUploading gate
+        singleShotPending = true;
         notifyPhotoControlStatus(PHOTO_STATUS_SINGLE, 0);
     } else if (command == PHOTO_CMD_STOP) {
         isCapturingPhotos = false;
         captureInterval = 0;
+        liveStreamActive = false;
+        singleShotPending = false;
         notifyPhotoControlStatus(PHOTO_STATUS_STOPPED, 0);
     } else if (command == PHOTO_CMD_INTERVAL && intervalSeconds >= 5 && intervalSeconds <= 300) {
+        liveStreamActive = false;
         captureInterval = intervalSeconds * 1000;
         isCapturingPhotos = true;
         lastCaptureTime = millis() - captureInterval;
         notifyPhotoControlStatus(PHOTO_STATUS_INTERVAL, intervalSeconds);
+    } else if (command == PHOTO_CMD_LIVE_STREAM && len >= 6) {
+        liveStreamActive = data[1] ? true : false;
+        if (liveStreamActive) {
+            isCapturingPhotos = false;
+            // Save current quality for restoration
+            savedQuality = 12;
+            // Set live stream parameters
+            framesize_t fs = (framesize_t)data[2];
+            if (fs <= FRAMESIZE_UXGA) {
+                sensor_t *s = esp_camera_sensor_get();
+                if (s) s->set_framesize(s, fs);
+            }
+            uint8_t q = data[3];
+            if (q >= 10 && q <= 63) {
+                sensor_t *s = esp_camera_sensor_get();
+                if (s) s->set_quality(s, q);
+            }
+            liveStreamInterval = data[4] | (data[5] << 8);
+            if (liveStreamInterval < 500) liveStreamInterval = 500; // Min 500ms
+            if (liveStreamInterval > 10000) liveStreamInterval = 10000; // Max 10s
+            lastCaptureTime = millis() - liveStreamInterval;
+            notifyPhotoControlStatus(PHOTO_STATUS_LIVE, 0);
+            Serial.printf("Live stream started: framesize=%d quality=%d interval=%ums\n", data[2], q, liveStreamInterval);
+        } else {
+            Serial.println("Live stream stopped");
+            notifyPhotoControlStatus(PHOTO_STATUS_STOPPED, 0);
+        }
+    } else if (command == PHOTO_CMD_CAPTURE_HIRES) {
+        // Capture one frame at quality=8 for maximum detail
+        sensor_t *s = esp_camera_sensor_get();
+        int restoreQuality = 12;
+        if (s) {
+            restoreQuality = s->status.quality;
+            s->set_quality(s, 8);
+        }
+        singleShotPending = true;
+        // Schedule restoring quality after capture
+        savedQuality = restoreQuality;
+        notifyPhotoControlStatus(PHOTO_STATUS_SINGLE, 0);
+        Serial.println("Hi-res capture requested (quality=8)");
     } else {
         Serial.printf("PhotoControl: invalid command=0x%02x interval=%u\n", command, intervalSeconds);
     }
@@ -1170,8 +1217,32 @@ void loop_app()
         firstBatteryUpdate = false;
     }
 
-    // Check if it's time to capture a photo
-    if (isCapturingPhotos && !photoDataUploading && connected) {
+    // High-priority single shot (bypasses photoDataUploading gate)
+    if (singleShotPending && connected && !photoDataUploading) {
+        singleShotPending = false;
+        Serial.println("Single shot triggered (high priority).");
+        if (take_photo()) {
+            photoDataUploading = true;
+            sent_photo_bytes = 0;
+            sent_photo_frames = 0;
+            lastCaptureTime = now;
+        }
+    }
+
+    // Live stream mode: capture at fast interval
+    if (liveStreamActive && connected && !photoDataUploading) {
+        if (now - lastCaptureTime >= liveStreamInterval) {
+            if (take_photo()) {
+                photoDataUploading = true;
+                sent_photo_bytes = 0;
+                sent_photo_frames = 0;
+                lastCaptureTime = now;
+            }
+        }
+    }
+
+    // Normal interval capture
+    if (isCapturingPhotos && !photoDataUploading && connected && !liveStreamActive) {
         if ((captureInterval == 0) || (now - lastCaptureTime >= (unsigned long) captureInterval)) {
             if (captureInterval == 0) {
                 // Single shot if interval=0

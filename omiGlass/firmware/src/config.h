@@ -96,7 +96,7 @@ typedef enum {
 #define BLE_CONN_MIN_INTERVAL 20 // 25ms minimum connection interval (was 20ms)
 #define BLE_CONN_MAX_INTERVAL 40 // 50ms maximum connection interval (was 40ms)
 #define BLE_CONN_LATENCY 0       // No latency for immediate response
-#define BLE_CONN_TIMEOUT 800     // 8 second supervision timeout
+#define BLE_CONN_TIMEOUT 400     // 4 second supervision timeout (faster disconnect detection)
 
 // =============================================================================
 // POWER STATES
@@ -155,13 +155,21 @@ typedef enum {
 #define PHOTO_CONTROL_UUID "19B10006-E8F2-537E-4F6C-D104768A1214"
 #define CAMERA_CONTROL_UUID "19B10007-E8F2-537E-4F6C-D104768A1214"
 
-// Photo Control v2 commands: [command, interval_seconds_low, interval_seconds_high]
+// Photo Control v2 commands: [command, ...params]
 #define PHOTO_CMD_SINGLE 0x01
 #define PHOTO_CMD_STOP 0x02
 #define PHOTO_CMD_INTERVAL 0x03
+#define PHOTO_CMD_LIVE_STREAM 0x04   // +5 bytes: [on/off, framesize, quality, interval_lo, interval_hi]
+#define PHOTO_CMD_CAPTURE_HIRES 0x05 // Capture single photo at quality=8
 #define PHOTO_STATUS_STOPPED 0x00
 #define PHOTO_STATUS_SINGLE 0x01
 #define PHOTO_STATUS_INTERVAL 0x02
+#define PHOTO_STATUS_LIVE 0x03
+
+// Live stream defaults
+#define LIVE_STREAM_DEFAULT_FRAMESIZE FRAMESIZE_QVGA // 320x240
+#define LIVE_STREAM_DEFAULT_INTERVAL_MS 1500         // ~0.67 fps
+#define LIVE_STREAM_DEFAULT_QUALITY 15
 
 // Camera Control Commands (written to CAMERA_CONTROL_UUID)
 #define CAM_CMD_SET_FRAMESIZE 0x01   // +1 byte: framesize (0=96x96...13=UXGA)

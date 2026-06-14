@@ -200,6 +200,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
         }
         setCapture(current => ({ ...current, pending: true, error: undefined }));
         try {
+            log('info', `发送采集命令：${Array.from(command).map(value => value.toString(16).padStart(2, '0')).join(' ')}`);
             await characteristic.writeValue(command);
             setCapture({ ...fallback, pending: false });
             log('info', `采集模式切换为 ${fallback.mode}${fallback.mode === 'interval' ? ` / ${fallback.intervalSeconds}s` : ''}`);

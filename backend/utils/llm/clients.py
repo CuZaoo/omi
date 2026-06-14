@@ -33,6 +33,11 @@ _usage_callback = get_usage_callback()
 # own AI Studio API key. Platform calls use ChatGoogleGenerativeAI (native SDK).
 _GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+# Local LLM (OpenAI-compatible endpoint) — used when a feature resolves to provider 'local'.
+_LOCAL_LLM_BASE_URL = os.environ.get('LOCAL_LLM_BASE_URL', '').strip()
+_LOCAL_LLM_API_KEY = os.environ.get('LOCAL_LLM_API_KEY', 'not-set')
+_LOCAL_LLM_MODEL = os.environ.get('LOCAL_LLM_MODEL', 'qwen3.6-35b').strip()
+
 
 class _AnthropicClientProxy:
     """Forwards every attribute to the appropriate anthropic.AsyncAnthropic for the request."""
@@ -212,6 +217,7 @@ def get_openai_chat(model: str, **kwargs) -> ChatOpenAI:
 #   premium  — maximize cost savings while preserving 80% of max quality
 #   max      — 100% quality, best models available, no cost optimization
 #   byok     — same models as max (BYOK users pay their own API costs)
+#   local    — all routable features use a local OpenAI-compatible endpoint
 # ---------------------------------------------------------------------------
 
 MODEL_QOS_PROFILES: Dict[str, Dict[str, Tuple[str, str]]] = {
@@ -365,6 +371,49 @@ MODEL_QOS_PROFILES: Dict[str, Dict[str, Tuple[str, str]]] = {
         # Perplexity
         'web_search': ('sonar-pro', 'perplexity'),
     },
+    # -----------------------------------------------------------------------
+    # local — routes every routable feature to a local OpenAI-compatible LLM endpoint.
+    # Selected via MODEL_QOS=local. Requires LOCAL_LLM_BASE_URL env var.
+    # chat_agent and web_search stay on their native providers (Anthropic / Perplexity).
+    # fair_use stays pinned to gpt-5.1 (cost protection).
+    # -----------------------------------------------------------------------
+    'local': {
+        'conv_action_items': (_LOCAL_LLM_MODEL, 'local'),
+        'conv_structure': (_LOCAL_LLM_MODEL, 'local'),
+        'conv_app_result': (_LOCAL_LLM_MODEL, 'local'),
+        'conv_app_select': (_LOCAL_LLM_MODEL, 'local'),
+        'conv_folder': (_LOCAL_LLM_MODEL, 'local'),
+        'conv_discard': (_LOCAL_LLM_MODEL, 'local'),
+        'daily_summary': (_LOCAL_LLM_MODEL, 'local'),
+        'daily_summary_simple': (_LOCAL_LLM_MODEL, 'local'),
+        'external_structure': (_LOCAL_LLM_MODEL, 'local'),
+        'memories': (_LOCAL_LLM_MODEL, 'local'),
+        'learnings': (_LOCAL_LLM_MODEL, 'local'),
+        'memory_conflict': (_LOCAL_LLM_MODEL, 'local'),
+        'memory_category': (_LOCAL_LLM_MODEL, 'local'),
+        'knowledge_graph': (_LOCAL_LLM_MODEL, 'local'),
+        'chat_responses': (_LOCAL_LLM_MODEL, 'local'),
+        'chat_extraction': (_LOCAL_LLM_MODEL, 'local'),
+        'chat_graph': (_LOCAL_LLM_MODEL, 'local'),
+        'session_titles': (_LOCAL_LLM_MODEL, 'local'),
+        'goals': (_LOCAL_LLM_MODEL, 'local'),
+        'goals_advice': (_LOCAL_LLM_MODEL, 'local'),
+        'notifications': (_LOCAL_LLM_MODEL, 'local'),
+        'proactive_notification': (_LOCAL_LLM_MODEL, 'local'),
+        'followup': (_LOCAL_LLM_MODEL, 'local'),
+        'smart_glasses': (_LOCAL_LLM_MODEL, 'local'),
+        'openglass': (_LOCAL_LLM_MODEL, 'local'),
+        'onboarding': (_LOCAL_LLM_MODEL, 'local'),
+        'app_generator': (_LOCAL_LLM_MODEL, 'local'),
+        'app_integration': (_LOCAL_LLM_MODEL, 'local'),
+        'persona_clone': (_LOCAL_LLM_MODEL, 'local'),
+        'trends': (_LOCAL_LLM_MODEL, 'local'),
+        'persona_chat': (_LOCAL_LLM_MODEL, 'local'),
+        'persona_chat_premium': (_LOCAL_LLM_MODEL, 'local'),
+        'wrapped_analysis': (_LOCAL_LLM_MODEL, 'local'),
+        'chat_agent': ('claude-sonnet-4-6', 'anthropic'),
+        'web_search': ('sonar-pro', 'perplexity'),
+    },
 }
 
 # Pinned features — (model, provider) fixed regardless of profile or env override.
@@ -440,7 +489,7 @@ def get_provider(feature: str) -> str:
     """Get the provider for a feature from the active Model QoS profile.
 
     Returns:
-        Provider string: 'openai', 'gemini', 'openrouter', 'anthropic', 'perplexity'.
+        Provider string: 'openai', 'gemini', 'openrouter', 'anthropic', 'perplexity', 'local'.
     """
     return _get_model_config(feature)[1]
 
@@ -465,6 +514,24 @@ def _get_or_create_openai_llm(model_name: str, streaming: bool = False) -> ChatO
         }
         if model_name == 'gpt-5.1':
             kwargs['extra_body'] = {"prompt_cache_retention": "24h"}
+        if streaming:
+            kwargs['streaming'] = True
+            kwargs['stream_options'] = {"include_usage": True}
+        _llm_cache[key] = ChatOpenAI(model=model_name, **kwargs)
+    return _llm_cache[key]
+
+
+def _get_or_create_local_llm(model_name: str, streaming: bool = False) -> ChatOpenAI:
+    """Get or create a cached ChatOpenAI for a local OpenAI-compatible LLM endpoint."""
+    key = (model_name, streaming, 'local')
+    if key not in _llm_cache:
+        kwargs: Dict[str, Any] = {
+            'base_url': _LOCAL_LLM_BASE_URL,
+            'api_key': _LOCAL_LLM_API_KEY,
+            'callbacks': [_usage_callback],
+            'request_timeout': 120,
+            'max_retries': 1,
+        }
         if streaming:
             kwargs['streaming'] = True
             kwargs['stream_options'] = {"include_usage": True}
@@ -551,6 +618,8 @@ def _get_or_create_gemini_llm(
 
 def _get_default_client(model: str, provider: str, streaming: bool, feature: str) -> BaseChatModel:
     """Get the cached default client for a model/provider combo."""
+    if provider == 'local':
+        return _get_or_create_local_llm(model, streaming)
     if provider == 'openrouter':
         temp = _OPENROUTER_TEMPERATURES.get(feature)
         return _get_or_create_openrouter_llm(model, streaming, temp)

@@ -58,8 +58,8 @@ from utils.llm.clients import (
 class TestModelQosProfiles:
     """Verify profile structure and completeness."""
 
-    def test_three_profiles_exist(self):
-        assert set(MODEL_QOS_PROFILES.keys()) == {'premium', 'max', 'byok'}
+    def test_four_profiles_exist(self):
+        assert set(MODEL_QOS_PROFILES.keys()) == {'premium', 'max', 'byok', 'local'}
 
     def test_all_profiles_have_same_features(self):
         feature_sets = {name: set(profile.keys()) for name, profile in MODEL_QOS_PROFILES.items()}
@@ -76,7 +76,10 @@ class TestModelQosProfiles:
             providers = {provider for _model, provider in profile.values()}
             assert 'anthropic' in providers, f'{profile_name} missing Anthropic models'
             assert 'perplexity' in providers, f'{profile_name} missing Perplexity models'
-            assert 'openrouter' in providers, f'{profile_name} should have OpenRouter (wrapped_analysis)'
+            if profile_name != 'local':
+                assert 'openrouter' in providers, f'{profile_name} should have OpenRouter (wrapped_analysis)'
+            else:
+                assert 'local' in providers, f'{profile_name} should have local provider'
         # OpenAI-based profiles must have OpenAI provider
         for name in ('premium', 'max', 'byok'):
             providers = {p for _m, p in MODEL_QOS_PROFILES[name].values()}

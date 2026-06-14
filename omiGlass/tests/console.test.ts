@@ -1,4 +1,5 @@
-import { PhotoAssembler, decodeCaptureStatus, encodeIntervalCapture, encodeSingleCapture, encodeStopCapture } from '../sources/modules/photoProtocol';
+import { normalizeLocalWifiScan } from '../sources/modules/localWifi';
+import { PhotoAssembler, decodeCaptureStatus, decodeScanResult, encodeIntervalCapture, encodeSingleCapture, encodeStopCapture } from '../sources/modules/photoProtocol';
 import { canEnqueueAnalysis, responseText } from '../sources/modules/providers';
 import { retainRecentSessions } from '../sources/modules/sessionStorage';
 import { ANTI_GREEN_CAMERA_SETTINGS, encodeCameraSetting } from '../sources/modules/useDebug';
@@ -19,6 +20,17 @@ equal(Array.from(encodeStopCapture()), [0], 'legacy-compatible stop capture comm
 equal(Array.from(encodeIntervalCapture(30)), [30], 'legacy-compatible interval command');
 equal(Array.from(encodeIntervalCapture(300)), [3, 44, 1], '300 second interval command');
 equal(decodeCaptureStatus(new Uint8Array([2, 30, 0])), { mode: 'interval', intervalSeconds: 30 }, 'capture status');
+equal(decodeScanResult(new Uint8Array([0x60, 3, 79, 77, 73, 0xd8])), { ssid: 'OMI', rssi: -40, source: 'glass' }, 'signed glass WiFi RSSI');
+equal(normalizeLocalWifiScan({
+    currentSsid: 'Office',
+    networks: [{ ssid: 'Guest', signal: 60, band: '2.4 GHz' }, { ssid: 'Office', rssi: -41, connected: true, band: '5 GHz', compatible: false }],
+}), {
+    currentSsid: 'Office',
+    networks: [
+        { ssid: 'Office', rssi: -41, connected: true, source: 'computer', band: '5 GHz', compatible: false },
+        { ssid: 'Guest', rssi: -70, connected: false, source: 'computer', band: '2.4 GHz', compatible: true },
+    ],
+}, 'local WiFi scan normalization');
 equal(Array.from(encodeCameraSetting('brightness', -2)), [0x03, 0xfe], 'signed camera setting');
 equal(Array.from(encodeCameraSetting('aecValue', 1200)), [0x07, 0xb0, 0x04], '16-bit exposure setting');
 equal(Array.from(encodeCameraSetting('wbMode', 3)), [0x0f, 0x03], 'office white balance setting');
@@ -36,7 +48,7 @@ legacyAssembler.push(0, new Uint8Array([20, 21]));
 const legacyFrame = legacyAssembler.push(null, new Uint8Array());
 equal(legacyFrame?.orientation, 2, 'legacy firmware rotation');
 
-equal(RECONNECT_DELAYS, [1000, 2000, 4000], 'reconnect backoff');
+equal(RECONNECT_DELAYS, [500, 1000, 2000], 'reconnect backoff');
 const devices = [{ id: 'first' }, { id: 'target' }] as BluetoothDevice[];
 equal(findStoredDevice(devices, 'target')?.id, 'target', 'stored device restoration');
 assert(findStoredDevice(devices, 'missing') === null, 'missing stored device');

@@ -393,3 +393,27 @@ Look for unrealistic voltages (<2V or >5V).
 | App shows wrong % | `status` | Compare readings | Reconnect BLE |
 
 **For hardware issues**: Check the voltage divider circuit and ensure the ADC pin `A0` is properly connected to the battery voltage divider midpoint.
+
+---
+
+## Camera Control BLE Protocol
+
+Write camera commands to characteristic `19B10007-E8F2-537E-4F6C-D104768A1214`. Unless noted otherwise, each command is
+two bytes: `[opcode, value]`. Signed values use two's-complement `int8`; AEC value uses `[0x07, low, high]`.
+
+| Opcode | Setting | Range |
+| --- | --- | --- |
+| `0x01` | Frame size | `0` 96x96 through `13` UXGA |
+| `0x02` | JPEG quality | `10-63`, lower is better |
+| `0x03-0x06` | Brightness, contrast, saturation, AE level | `-2..2` |
+| `0x07` | Manual AEC value | `0-1200`, little-endian 16-bit |
+| `0x08` | Gain ceiling | `0-6` (`2x` through `128x`) |
+| `0x09-0x0E` | White balance, AWB gain, mirror, flip, AEC, AGC | `0/1` |
+| `0x0F` | White balance mode | `0` auto, `1` sunny, `2` cloudy, `3` office, `4` home |
+| `0x10` | Manual AGC gain | `0-30` |
+| `0x11` | AEC2 | `0/1` |
+| `0x12` | Special effect | `0-6` |
+| `0x13-0x18` | BPC, WPC, raw gamma, lens correction, DCW, color bar | `0/1` |
+
+The firmware validates all numeric ranges before applying them to the OV2640 sensor. Sharpness and denoise are omitted
+because this sensor driver returns unsupported for both controls.

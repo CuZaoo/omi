@@ -96,6 +96,30 @@ function CameraControls({ device }: { device: BluetoothRemoteGATTServer | null }
 
     return (
         <View>
+            <Text style={styles.groupTitle}>快速预设</Text>
+            <Text style={styles.groupHint}>单击即可批量应用一组参数。</Text>
+            <View style={styles.quickPresetRow}>
+                <Pressable style={styles.quickPreset} onPress={() => camera.applyAll({ ...camera.settings, quality: 8, contrast: 1 })} disabled={camera.pending}>
+                    <Text style={styles.quickPresetEmoji}>🔍</Text>
+                    <Text style={styles.quickPresetLabel}>更清晰</Text>
+                    <Text style={styles.quickPresetHint}>q=8, 对比+1</Text>
+                </Pressable>
+                <Pressable style={styles.quickPreset} onPress={() => camera.applyAll({ ...camera.settings, aeLevel: -1, aecValue: 200 })} disabled={camera.pending}>
+                    <Text style={styles.quickPresetEmoji}>🌞</Text>
+                    <Text style={styles.quickPresetLabel}>室外</Text>
+                    <Text style={styles.quickPresetHint}>曝光-1</Text>
+                </Pressable>
+                <Pressable style={styles.quickPreset} onPress={() => camera.applyAll({ ...camera.settings, aecValue: 350, gainCeiling: 2 })} disabled={camera.pending}>
+                    <Text style={styles.quickPresetEmoji}>💡</Text>
+                    <Text style={styles.quickPresetLabel}>室内</Text>
+                    <Text style={styles.quickPresetHint}>增益 4x</Text>
+                </Pressable>
+                <Pressable style={styles.quickPreset} onPress={() => camera.applyAll({ ...camera.settings, saturation: -1, brightness: 1 })} disabled={camera.pending}>
+                    <Text style={styles.quickPresetEmoji}>📄</Text>
+                    <Text style={styles.quickPresetLabel}>文档</Text>
+                    <Text style={styles.quickPresetHint}>去饱和</Text>
+                </Pressable>
+            </View>
             <View style={styles.presetRow}>
                 <Pressable style={styles.presetPrimary} onPress={camera.applyAntiGreen} disabled={camera.pending}>
                     <Text style={styles.presetPrimaryText}>办公室去绿</Text>
@@ -284,6 +308,7 @@ const styles = StyleSheet.create({
     providerRow: { flexDirection: 'row', gap: 8, marginTop: 4 }, testButton: { flex: 1, minHeight: 38, borderWidth: 1, borderColor: '#315257', alignItems: 'center', justifyContent: 'center' }, testText: { color: '#b7cdca', fontSize: 9, fontFamily: 'Cascadia Mono' },
     testResult: { color: '#9cb7b4', backgroundColor: '#071012', padding: 12, marginTop: 10, fontFamily: 'Cascadia Mono', fontSize: 11 },
     warning: { color: '#e9b65c', backgroundColor: '#241d0f', borderLeftWidth: 2, borderLeftColor: '#e9b65c', padding: 12, marginTop: 12, fontSize: 11, lineHeight: 17 },
+    quickPresetRow: { flexDirection: 'row', gap: 8, marginBottom: 14 }, quickPreset: { flex: 1, minHeight: 68, borderWidth: 1, borderColor: '#24474b', backgroundColor: '#0c1f22', alignItems: 'center', justifyContent: 'center', paddingVertical: 8 }, quickPresetEmoji: { fontSize: 18 }, quickPresetLabel: { color: '#d3e6e3', fontSize: 11, fontWeight: '700', marginTop: 4 }, quickPresetHint: { color: '#5f8284', fontSize: 8, marginTop: 2, fontFamily: 'Cascadia Mono' },
     presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
     presetPrimary: { minHeight: 38, paddingHorizontal: 14, backgroundColor: '#65f2e8', alignItems: 'center', justifyContent: 'center' },
     presetPrimaryText: { color: '#061011', fontSize: 11, fontWeight: '800' },

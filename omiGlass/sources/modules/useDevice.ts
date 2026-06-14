@@ -2,7 +2,7 @@ import * as React from 'react';
 import { DeviceStatus } from '../types/console';
 
 const DEVICE_STORAGE_KEY = 'openglassDeviceId';
-export const RECONNECT_DELAYS = [1000, 2000, 4000];
+export const RECONNECT_DELAYS = [500, 1000, 2000];
 const OMI_SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
 
 type BluetoothWithDevices = Bluetooth & {

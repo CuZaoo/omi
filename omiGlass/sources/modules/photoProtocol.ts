@@ -4,6 +4,8 @@ export const PHOTO_COMMAND = {
     single: 0x01,
     stop: 0x02,
     interval: 0x03,
+    liveStream: 0x04,
+    captureHiRes: 0x05,
 } as const;
 
 export interface PhotoPacketResult {
@@ -29,6 +31,27 @@ export function encodeIntervalCapture(seconds: number): Uint8Array {
     return new Uint8Array([PHOTO_COMMAND.interval, normalized & 0xff, (normalized >> 8) & 0xff]);
 }
 
+export function encodeLiveStream(
+    active: boolean,
+    framesize: number,
+    quality: number,
+    intervalMs: number,
+): Uint8Array {
+    const normalizedInterval = Math.max(500, Math.min(10000, Math.round(intervalMs)));
+    return new Uint8Array([
+        PHOTO_COMMAND.liveStream,
+        active ? 1 : 0,
+        framesize,
+        quality,
+        normalizedInterval & 0xff,
+        (normalizedInterval >> 8) & 0xff,
+    ]);
+}
+
+export function encodeCaptureHiRes(): Uint8Array {
+    return new Uint8Array([PHOTO_COMMAND.captureHiRes]);
+}
+
 export function decodeCaptureStatus(data: Uint8Array): { mode: CaptureMode; intervalSeconds: number } | null {
     if (data.length < 3) {
         return null;
@@ -42,6 +65,9 @@ export function decodeCaptureStatus(data: Uint8Array): { mode: CaptureMode; inte
     }
     if (data[0] === 2) {
         return { mode: 'interval', intervalSeconds };
+    }
+    if (data[0] === 3) {
+        return { mode: 'live', intervalSeconds: 0 };
     }
     return null;
 }

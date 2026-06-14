@@ -7,7 +7,7 @@ export type DeviceStatus =
     | 'error'
     | 'unsupported';
 
-export type CaptureMode = 'stopped' | 'single' | 'interval';
+export type CaptureMode = 'stopped' | 'single' | 'interval' | 'live';
 
 export type StageStatus = 'pending' | 'running' | 'success' | 'error' | 'skipped';
 

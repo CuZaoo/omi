@@ -3,6 +3,8 @@ import { rotateImage } from './imaging';
 import {
     decodeCaptureStatus,
     encodeIntervalCapture,
+    encodeLiveStream,
+    encodeCaptureHiRes,
     encodeSingleCapture,
     encodeStopCapture,
     PhotoAssembler,
@@ -210,6 +212,25 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
         }
     }, [log]);
 
+    const toggleLiveStream = React.useCallback((
+        active: boolean,
+        framesize = 5,
+        quality = 15,
+        intervalMs = 1500,
+    ) => {
+        const command = encodeLiveStream(active, framesize, quality, intervalMs);
+        const fallback: Pick<CaptureState, 'mode' | 'intervalSeconds'> = active
+            ? { mode: 'live', intervalSeconds: 0 }
+            : { mode: 'stopped', intervalSeconds: 0 };
+        writeCaptureCommand(command, fallback);
+        log('info', `Live stream ${active ? 'started' : 'stopped'} (${framesize}, q=${quality}, ${intervalMs}ms)`);
+    }, [writeCaptureCommand, log]);
+
+    const captureHiRes = React.useCallback(() => {
+        writeCaptureCommand(encodeCaptureHiRes(), { mode: 'single', intervalSeconds: 0 });
+        log('info', 'Hi-res capture requested');
+    }, [writeCaptureCommand, log]);
+
     return {
         subscribed,
         capture,
@@ -221,5 +242,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
             intervalSeconds: Math.max(5, Math.min(300, Math.round(seconds))),
         }),
         stopCapture: () => writeCaptureCommand(encodeStopCapture(), { mode: 'stopped', intervalSeconds: 0 }),
+        toggleLiveStream,
+        captureHiRes,
     };
 }

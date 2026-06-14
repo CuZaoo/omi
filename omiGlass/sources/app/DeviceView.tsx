@@ -5,6 +5,7 @@ import { toBase64Image } from '../utils/base64';
 import { Agent } from '../agent/Agent';
 import { InvalidateSync } from '../utils/invalidateSync';
 import { textToSpeech } from '../modules/openai';
+import { DebugView } from './DebugView';
 
 function usePhotos(device: BluetoothRemoteGATTServer) {
 
@@ -94,25 +95,29 @@ function usePhotos(device: BluetoothRemoteGATTServer) {
                 buffer = new Uint8Array([...buffer, ...data]);
             }
 
-            // Subscribe for photo updates
-            const service = await device.getPrimaryService('19B10000-E8F2-537E-4F6C-D104768A1214'.toLowerCase());
-            const photoCharacteristic = await service.getCharacteristic('19b10005-e8f2-537e-4f6c-d104768a1214');
-            await photoCharacteristic.startNotifications();
-            setSubscribed(true);
-            photoCharacteristic.addEventListener('characteristicvaluechanged', (e) => {
-                let value = (e.target as BluetoothRemoteGATTCharacteristic).value!;
-                let array = new Uint8Array(value.buffer);
-                if (array[0] == 0xff && array[1] == 0xff) {
-                    onChunk(null, new Uint8Array());
-                } else {
-                    let packetId = array[0] + (array[1] << 8);
-                    let packet = array.slice(2);
-                    onChunk(packetId, packet);
-                }
-            });
-            // Start automatic photo capture every 5s
-            const photoControlCharacteristic = await service.getCharacteristic('19b10006-e8f2-537e-4f6c-d104768a1214');
-            await photoControlCharacteristic.writeValue(new Uint8Array([0x05]));
+            try {
+                // Subscribe for photo updates
+                const service = await device.getPrimaryService('19B10000-E8F2-537E-4F6C-D104768A1214'.toLowerCase());
+                const photoCharacteristic = await service.getCharacteristic('19b10005-e8f2-537e-4f6c-d104768a1214');
+                await photoCharacteristic.startNotifications();
+                setSubscribed(true);
+                photoCharacteristic.addEventListener('characteristicvaluechanged', (e) => {
+                    let value = (e.target as BluetoothRemoteGATTCharacteristic).value!;
+                    let array = new Uint8Array(value.buffer);
+                    if (array[0] == 0xff && array[1] == 0xff) {
+                        onChunk(null, new Uint8Array());
+                    } else {
+                        let packetId = array[0] + (array[1] << 8);
+                        let packet = array.slice(2);
+                        onChunk(packetId, packet);
+                    }
+                });
+                // Start automatic photo capture
+                const photoControlCharacteristic = await service.getCharacteristic('19b10006-e8f2-537e-4f6c-d104768a1214');
+                await photoControlCharacteristic.writeValue(new Uint8Array([0x05]));
+            } catch (e) {
+                console.error('Failed to subscribe to photo updates', e);
+            }
         })();
     }, []);
 
@@ -121,6 +126,7 @@ function usePhotos(device: BluetoothRemoteGATTServer) {
 
 export const DeviceView = React.memo((props: { device: BluetoothRemoteGATTServer }) => {
     const [subscribed, photos] = usePhotos(props.device);
+    const [showDebug, setShowDebug] = React.useState(false);
     const agent = React.useMemo(() => new Agent(), []);
     const agentState = agent.use();
     const [activePhotoIndex, setActivePhotoIndex] = React.useState<number | null>(null);
@@ -144,8 +150,23 @@ export const DeviceView = React.memo((props: { device: BluetoothRemoteGATTServer
 
     return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            {showDebug && (
+                <DebugView device={props.device} onClose={() => setShowDebug(false)} />
+            )}
             {/* Display photos in a grid filling the screen */}
             <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#111' }}>
+                {photos.length === 0 && (
+                    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                        <Text style={{ color: '#666', fontSize: 16, marginBottom: 8 }}>
+                            {subscribed ? 'Waiting for photos...' : 'Connecting to device...'}
+                        </Text>
+                        {subscribed && (
+                            <Text style={{ color: '#444', fontSize: 12 }}>
+                                First photo arrives within 30 seconds
+                            </Text>
+                        )}
+                    </View>
+                )}
                 <ScrollView contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', padding: 5 }}>
                     {photos.slice().reverse().map((photo, index) => ( // Display newest first
                         <Pressable
@@ -181,6 +202,20 @@ export const DeviceView = React.memo((props: { device: BluetoothRemoteGATTServer
                     ))}
                 </ScrollView>
             </View>
+            {/* Debug button - top right corner */}
+            {!showDebug && (
+                <Pressable
+                    onPress={() => setShowDebug(true)}
+                    style={{
+                        position: 'absolute', top: 50, right: 12,
+                        width: 40, height: 40, borderRadius: 20,
+                        backgroundColor: 'rgba(255,255,255,0.15)',
+                        alignItems: 'center', justifyContent: 'center',
+                    }}
+                >
+                    <Text style={{ color: '#fff', fontSize: 20 }}>⚙</Text>
+                </Pressable>
+            )}
         </View>
     );
 });

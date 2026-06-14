@@ -1,212 +1,268 @@
 import * as React from 'react';
-import axios from 'axios';
-import { keys } from '../keys';
 
 const CAMERA_CONTROL_UUID = '19b10007-e8f2-537e-4f6c-d104768a1214';
+const OMI_SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
+const CAMERA_SETTINGS_KEY = 'openglass:cameraSettings';
 
-// Camera control command bytes (must match firmware config.h)
-const CMD = {
-  SET_FRAMESIZE: 0x01,
-  SET_QUALITY: 0x02,
-  SET_BRIGHTNESS: 0x03,
-  SET_CONTRAST: 0x04,
-  SET_SATURATION: 0x05,
-  SET_AE_LEVEL: 0x06,
-  SET_AEC_VALUE: 0x07,
-  SET_GAINCEILING: 0x08,
-  SET_WHITEBAL: 0x09,
-  SET_AWB_GAIN: 0x0A,
-  SET_HMIRROR: 0x0B,
-  SET_VFLIP: 0x0C,
-  SET_AEC: 0x0D,
-  SET_AGC: 0x0E,
+export const CAMERA_COMMAND = {
+    framesize: 0x01,
+    quality: 0x02,
+    brightness: 0x03,
+    contrast: 0x04,
+    saturation: 0x05,
+    aeLevel: 0x06,
+    aecValue: 0x07,
+    gainCeiling: 0x08,
+    whiteBalance: 0x09,
+    awbGain: 0x0a,
+    horizontalMirror: 0x0b,
+    verticalFlip: 0x0c,
+    autoExposure: 0x0d,
+    autoGain: 0x0e,
+    wbMode: 0x0f,
+    agcGain: 0x10,
+    aec2: 0x11,
+    specialEffect: 0x12,
+    bpc: 0x13,
+    wpc: 0x14,
+    rawGma: 0x15,
+    lensCorrection: 0x16,
+    dcw: 0x17,
+    colorbar: 0x18,
+} as const;
+
+export interface CameraSettings {
+    framesize: number;
+    quality: number;
+    brightness: number;
+    contrast: number;
+    saturation: number;
+    aeLevel: number;
+    aecValue: number;
+    gainCeiling: number;
+    whiteBalance: boolean;
+    awbGain: boolean;
+    wbMode: number;
+    autoExposure: boolean;
+    aec2: boolean;
+    autoGain: boolean;
+    agcGain: number;
+    specialEffect: number;
+    bpc: boolean;
+    wpc: boolean;
+    rawGma: boolean;
+    lensCorrection: boolean;
+    dcw: boolean;
+    horizontalMirror: boolean;
+    verticalFlip: boolean;
+    colorbar: boolean;
+}
+
+export const DEFAULT_CAMERA_SETTINGS: CameraSettings = {
+    framesize: 8,
+    quality: 12,
+    brightness: 0,
+    contrast: 0,
+    saturation: 0,
+    aeLevel: 0,
+    aecValue: 300,
+    gainCeiling: 0,
+    whiteBalance: true,
+    awbGain: true,
+    wbMode: 0,
+    autoExposure: true,
+    aec2: false,
+    autoGain: true,
+    agcGain: 0,
+    specialEffect: 0,
+    bpc: false,
+    wpc: true,
+    rawGma: true,
+    lensCorrection: true,
+    dcw: true,
+    horizontalMirror: false,
+    verticalFlip: false,
+    colorbar: false,
 };
 
-async function writeCameraCommand(device: BluetoothRemoteGATTServer, cmd: number, ...params: number[]) {
-  try {
-    const service = await device.getPrimaryService('19B10000-E8F2-537E-4F6C-D104768A1214'.toLowerCase());
-    const char = await service.getCharacteristic(CAMERA_CONTROL_UUID);
-    await char.writeValue(new Uint8Array([cmd, ...params]));
-  } catch (e) {
-    console.error('Camera command failed:', cmd, e);
-  }
+export const ANTI_GREEN_CAMERA_SETTINGS: CameraSettings = {
+    ...DEFAULT_CAMERA_SETTINGS,
+    wbMode: 3,
+    saturation: -1,
+};
+
+type CameraSettingKey = keyof CameraSettings;
+
+function boolByte(value: boolean): number {
+    return value ? 1 : 0;
 }
 
-export function useDebug(device: BluetoothRemoteGATTServer) {
-  const [firmwareVersion, setFirmwareVersion] = React.useState('');
-  const [hardwareVersion, setHardwareVersion] = React.useState('');
-  const [serialNumber, setSerialNumber] = React.useState('');
-  const [batteryLevel, setBatteryLevel] = React.useState<number | null>(null);
+function int8Byte(value: number): number {
+    return value & 0xff;
+}
 
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const infoService = await device.getPrimaryService('device_information');
-        const fw = await infoService.getCharacteristic('firmware_revision_string');
-        setFirmwareVersion(new TextDecoder().decode(await fw.readValue()));
-        const hw = await infoService.getCharacteristic('hardware_revision_string');
-        setHardwareVersion(new TextDecoder().decode(await hw.readValue()));
-        const sn = await infoService.getCharacteristic('serial_number_string');
-        setSerialNumber(new TextDecoder().decode(await sn.readValue()));
-      } catch (e) {
-        console.error('Failed to read device info', e);
-      }
-    })();
-  }, [device]);
+export function encodeCameraSetting(key: CameraSettingKey, value: CameraSettings[CameraSettingKey]): Uint8Array {
+    const command = CAMERA_COMMAND[key];
+    if (key === 'aecValue') {
+        const numeric = value as number;
+        return new Uint8Array([command, numeric & 0xff, (numeric >> 8) & 0xff]);
+    }
+    if (key === 'brightness' || key === 'contrast' || key === 'saturation' || key === 'aeLevel') {
+        return new Uint8Array([command, int8Byte(value as number)]);
+    }
+    return new Uint8Array([command, typeof value === 'boolean' ? boolByte(value) : value as number]);
+}
 
-  React.useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    (async () => {
-      try {
-        const batteryService = await device.getPrimaryService(0x180f);
-        const batteryChar = await batteryService.getCharacteristic(0x2a19);
-        const readBattery = async () => {
-          try {
-            const v = await batteryChar.readValue();
-            setBatteryLevel(v.getUint8(0));
-          } catch { }
-        };
-        await readBattery();
-        interval = setInterval(readBattery, 30000);
-      } catch (e) {
-        console.error('Battery service not available', e);
-      }
-    })();
-    return () => clearInterval(interval);
-  }, [device]);
-
-  const setFramesize = React.useCallback((v: number) => writeCameraCommand(device, CMD.SET_FRAMESIZE, v), [device]);
-  const setQuality = React.useCallback((v: number) => writeCameraCommand(device, CMD.SET_QUALITY, v), [device]);
-  const setBrightness = React.useCallback((v: number) => writeCameraCommand(device, CMD.SET_BRIGHTNESS, v + 128), [device]);
-  const setContrast = React.useCallback((v: number) => writeCameraCommand(device, CMD.SET_CONTRAST, v + 128), [device]);
-  const setSaturation = React.useCallback((v: number) => writeCameraCommand(device, CMD.SET_SATURATION, v + 128), [device]);
-  const setAeLevel = React.useCallback((v: number) => writeCameraCommand(device, CMD.SET_AE_LEVEL, v + 128), [device]);
-  const setAecValue = React.useCallback((v: number) => {
-    writeCameraCommand(device, CMD.SET_AEC_VALUE, v & 0xFF, (v >> 8) & 0xFF);
-  }, [device]);
-  const setGainceiling = React.useCallback((v: number) => writeCameraCommand(device, CMD.SET_GAINCEILING, v), [device]);
-  const toggleWhitebal = React.useCallback((on: boolean) => writeCameraCommand(device, CMD.SET_WHITEBAL, on ? 1 : 0), [device]);
-  const toggleAwbGain = React.useCallback((on: boolean) => writeCameraCommand(device, CMD.SET_AWB_GAIN, on ? 1 : 0), [device]);
-  const toggleHmirror = React.useCallback((on: boolean) => writeCameraCommand(device, CMD.SET_HMIRROR, on ? 1 : 0), [device]);
-  const toggleVflip = React.useCallback((on: boolean) => writeCameraCommand(device, CMD.SET_VFLIP, on ? 1 : 0), [device]);
-  const toggleAec = React.useCallback((on: boolean) => writeCameraCommand(device, CMD.SET_AEC, on ? 1 : 0), [device]);
-  const toggleAgc = React.useCallback((on: boolean) => writeCameraCommand(device, CMD.SET_AGC, on ? 1 : 0), [device]);
-
-  const takeSinglePhoto = React.useCallback(async () => {
+export function loadCameraSettings(): CameraSettings {
     try {
-      const service = await device.getPrimaryService('19B10000-E8F2-537E-4F6C-D104768A1214'.toLowerCase());
-      const controlChar = await service.getCharacteristic('19b10006-e8f2-537e-4f6c-d104768a1214');
-      await controlChar.writeValue(new Uint8Array([0xFF]));
-    } catch (e) {
-      console.error('Failed to trigger photo', e);
+        return { ...DEFAULT_CAMERA_SETTINGS, ...JSON.parse(localStorage.getItem(CAMERA_SETTINGS_KEY) || '{}') };
+    } catch {
+        return DEFAULT_CAMERA_SETTINGS;
     }
-  }, [device]);
-
-  return {
-    firmwareVersion, hardwareVersion, serialNumber, batteryLevel,
-    setFramesize, setQuality, setBrightness, setContrast, setSaturation,
-    setAeLevel, setAecValue, setGainceiling,
-    toggleWhitebal, toggleAwbGain, toggleHmirror, toggleVflip, toggleAec, toggleAgc,
-    takeSinglePhoto,
-  };
 }
 
-export async function testOpenAI(): Promise<string> {
-  if (!keys.openai) return 'No API key configured';
-  try {
-    const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: 'Reply with just the word OK' }],
-    }, {
-      headers: { Authorization: `Bearer ${keys.openai}`, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    return resp.data.choices[0].message.content;
-  } catch (e: any) {
-    return `Error: ${e.message}`;
-  }
+function persistCameraSettings(settings: CameraSettings): void {
+    localStorage.setItem(CAMERA_SETTINGS_KEY, JSON.stringify(settings));
 }
 
-export async function testGroq(): Promise<string> {
-  if (!keys.groq) return 'No API key configured';
-  try {
-    const resp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-      model: 'llama3-70b-8192',
-      messages: [{ role: 'user', content: 'Reply with just the word OK' }],
-    }, {
-      headers: { Authorization: `Bearer ${keys.groq}`, 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-    return resp.data.choices[0].message.content;
-  } catch (e: any) {
-    return `Error: ${e.message}`;
-  }
-}
+export function useDebug(device: BluetoothRemoteGATTServer | null) {
+    const [firmwareVersion, setFirmwareVersion] = React.useState('');
+    const [hardwareVersion, setHardwareVersion] = React.useState('');
+    const [serialNumber, setSerialNumber] = React.useState('');
+    const [batteryLevel, setBatteryLevel] = React.useState<number | null>(null);
+    const [settings, setSettingsState] = React.useState<CameraSettings>(loadCameraSettings);
+    const [pending, setPending] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
+    const [lastAppliedAt, setLastAppliedAt] = React.useState<number | null>(null);
+    const characteristicRef = React.useRef<BluetoothRemoteGATTCharacteristic | null>(null);
 
-export async function testOllama(): Promise<string> {
-  if (!keys.ollama) return 'No Ollama URL configured';
-  try {
-    const resp = await axios.post(keys.ollama, {
-      model: 'llama3',
-      messages: [{ role: 'user', content: 'Reply with just the word OK' }],
-      stream: false,
-    }, { timeout: 10000 });
-    return resp.data.message?.content ?? JSON.stringify(resp.data);
-  } catch (e: any) {
-    return `Error: ${e.message}`;
-  }
-}
+    React.useEffect(() => {
+        if (!device) {
+            characteristicRef.current = null;
+            return;
+        }
+        let cancelled = false;
+        void (async () => {
+            try {
+                const service = await device.getPrimaryService(OMI_SERVICE_UUID);
+                characteristicRef.current = await service.getCharacteristic(CAMERA_CONTROL_UUID);
+            } catch (characteristicError) {
+                if (!cancelled) {
+                    setError(`相机控制通道不可用：${String(characteristicError)}`);
+                }
+            }
+            try {
+                const infoService = await device.getPrimaryService('device_information');
+                const firmware = await (await infoService.getCharacteristic('firmware_revision_string')).readValue();
+                const hardware = await (await infoService.getCharacteristic('hardware_revision_string')).readValue();
+                const serial = await (await infoService.getCharacteristic('serial_number_string')).readValue();
+                if (!cancelled) {
+                    setFirmwareVersion(new TextDecoder().decode(firmware));
+                    setHardwareVersion(new TextDecoder().decode(hardware));
+                    setSerialNumber(new TextDecoder().decode(serial));
+                }
+            } catch (infoError) {
+                if (!cancelled) {
+                    setError(`设备信息读取失败：${String(infoError)}`);
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+            characteristicRef.current = null;
+        };
+    }, [device]);
 
-export async function testLocalLLM(baseUrl: string): Promise<string> {
-  if (!baseUrl) return 'No URL provided';
-  try {
-    const resp = await axios.post(`${baseUrl}/v1/chat/completions`, {
-      model: 'local',
-      messages: [{ role: 'user', content: 'Reply with just the word OK' }],
-    }, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 15000,
-    });
-    return resp.data.choices?.[0]?.message?.content ?? JSON.stringify(resp.data);
-  } catch (e: any) {
-    return `Error: ${e.message}`;
-  }
-}
+    React.useEffect(() => {
+        if (!device) {
+            setBatteryLevel(null);
+            return;
+        }
+        let interval: ReturnType<typeof setInterval> | undefined;
+        void (async () => {
+            try {
+                const batteryService = await device.getPrimaryService(0x180f);
+                const batteryCharacteristic = await batteryService.getCharacteristic(0x2a19);
+                const readBattery = async () => {
+                    const value = await batteryCharacteristic.readValue();
+                    setBatteryLevel(value.getUint8(0));
+                };
+                await readBattery();
+                interval = setInterval(() => void readBattery().catch(() => undefined), 30000);
+            } catch {
+                setBatteryLevel(null);
+            }
+        })();
+        return () => {
+            if (interval) {
+                clearInterval(interval);
+            }
+        };
+    }, [device]);
 
-export async function sendPrompt(provider: string, prompt: string): Promise<string> {
-  switch (provider) {
-    case 'openai': {
-      if (!keys.openai) return 'No API key';
-      const resp = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-      }, {
-        headers: { Authorization: `Bearer ${keys.openai}`, 'Content-Type': 'application/json' },
-        timeout: 30000,
-      });
-      return JSON.stringify(resp.data, null, 2);
-    }
-    case 'groq': {
-      if (!keys.groq) return 'No API key';
-      const resp = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: 'llama3-70b-8192',
-        messages: [{ role: 'user', content: prompt }],
-      }, {
-        headers: { Authorization: `Bearer ${keys.groq}`, 'Content-Type': 'application/json' },
-        timeout: 30000,
-      });
-      return JSON.stringify(resp.data, null, 2);
-    }
-    case 'ollama': {
-      if (!keys.ollama) return 'No URL';
-      const resp = await axios.post(keys.ollama, {
-        model: 'llama3',
-        messages: [{ role: 'user', content: prompt }],
-        stream: false,
-      }, { timeout: 30000 });
-      return JSON.stringify(resp.data, null, 2);
-    }
-    default:
-      return 'Unknown provider';
-  }
+    const writeSetting = React.useCallback(async (key: CameraSettingKey, value: CameraSettings[CameraSettingKey]) => {
+        const characteristic = characteristicRef.current;
+        if (!characteristic) {
+            throw new Error('相机控制通道尚未就绪');
+        }
+        await characteristic.writeValue(encodeCameraSetting(key, value));
+    }, []);
+
+    const setSetting = React.useCallback(async <K extends CameraSettingKey>(key: K, value: CameraSettings[K]) => {
+        setSettingsState(current => {
+            const next = { ...current, [key]: value };
+            persistCameraSettings(next);
+            return next;
+        });
+        if (!device) {
+            setError(null);
+            return;
+        }
+        setPending(true);
+        setError(null);
+        try {
+            await writeSetting(key, value);
+            setLastAppliedAt(Date.now());
+        } catch (settingError) {
+            setError(String(settingError));
+        } finally {
+            setPending(false);
+        }
+    }, [device, writeSetting]);
+
+    const applyAll = React.useCallback(async (next: CameraSettings = settings) => {
+        setSettingsState(next);
+        persistCameraSettings(next);
+        if (!device) {
+            setError('参数已保存在本机；连接眼镜后点击“应用全部”。');
+            return;
+        }
+        setPending(true);
+        setError(null);
+        try {
+            for (const key of Object.keys(next) as CameraSettingKey[]) {
+                await writeSetting(key, next[key]);
+            }
+            setLastAppliedAt(Date.now());
+        } catch (applyError) {
+            setError(String(applyError));
+        } finally {
+            setPending(false);
+        }
+    }, [device, settings, writeSetting]);
+
+    return {
+        firmwareVersion,
+        hardwareVersion,
+        serialNumber,
+        batteryLevel,
+        settings,
+        pending,
+        error,
+        lastAppliedAt,
+        setSetting,
+        applyAll,
+        applyAntiGreen: () => applyAll(ANTI_GREEN_CAMERA_SETTINGS),
+        resetDefaults: () => applyAll(DEFAULT_CAMERA_SETTINGS),
+    };
 }

@@ -1,310 +1,211 @@
 import * as React from 'react';
-import { View, Text, ScrollView, Pressable, TextInput, Switch, ActivityIndicator } from 'react-native';
-import { Theme } from './components/theme';
-import { useDebug, testOpenAI, testGroq, testOllama, testLocalLLM, sendPrompt } from '../modules/useDebug';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { configuredProviders, testProvider } from '../modules/providers';
+import { useDebug } from '../modules/useDebug';
+import { DiagnosticEntry, ModelSettings } from '../types/console';
 
-type TabName = 'camera' | 'llm' | 'info';
-
-const FRAMESIZE_OPTIONS = [
-  { label: '96x96', value: 0 },
-  { label: 'QQVGA', value: 1 },
-  { label: 'QCIF', value: 2 },
-  { label: 'HQVGA', value: 3 },
-  { label: '240x240', value: 4 },
-  { label: 'QVGA', value: 5 },
-  { label: 'CIF', value: 6 },
-  { label: 'HVGA', value: 7 },
-  { label: 'VGA', value: 8 },
-  { label: 'SVGA', value: 9 },
-  { label: 'XGA', value: 10 },
-];
-
-function TabBar({ active, onSelect }: { active: TabName; onSelect: (t: TabName) => void }) {
-  const tabs: { key: TabName; label: string }[] = [
-    { key: 'camera', label: 'Camera' },
-    { key: 'llm', label: 'LLM' },
-    { key: 'info', label: 'Info' },
-  ];
-  return (
-    <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#333' }}>
-      {tabs.map(t => (
-        <Pressable
-          key={t.key}
-          onPress={() => onSelect(t.key)}
-          style={{
-            flex: 1, paddingVertical: 12, alignItems: 'center',
-            borderBottomWidth: 2, borderBottomColor: active === t.key ? '#fff' : 'transparent',
-          }}
-        >
-          <Text style={{ color: active === t.key ? '#fff' : '#666', fontSize: 14, fontWeight: '600' }}>
-            {t.label}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
+interface DebugViewProps {
+    device: BluetoothRemoteGATTServer | null;
+    settings: ModelSettings;
+    diagnostics: DiagnosticEntry[];
+    onSettingsChange: (settings: ModelSettings) => void;
+    onClearSessions: () => void;
+    onClose: () => void;
 }
 
-function SliderControl({ label, value, min, max, step, onChange }: {
-  label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void;
+const FRAME_SIZES = [
+    ['96x96', 0], ['QQVGA', 1], ['QCIF', 2], ['HQVGA', 3], ['240x240', 4],
+    ['QVGA', 5], ['CIF', 6], ['HVGA', 7], ['VGA', 8], ['SVGA', 9],
+] as const;
+
+function Field(props: { label: string; value: string; onChange: (value: string) => void }) {
+    return (
+        <View style={styles.field}>
+            <Text style={styles.label}>{props.label}</Text>
+            <TextInput value={props.value} onChangeText={props.onChange} style={styles.input} placeholderTextColor="#587074" />
+        </View>
+    );
+}
+
+function OptionRow<T extends string>(props: {
+    label: string;
+    value: T;
+    options: Array<{ value: T; label: string }>;
+    onChange: (value: T) => void;
 }) {
-  return (
-    <View style={{ marginBottom: 12 }}>
-      <Text style={{ color: '#aaa', fontSize: 12, marginBottom: 4 }}>{label}: {value}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <Pressable
-          onPress={() => onChange(Math.max(min, value - (step ?? 1)))}
-          style={{ width: 36, height: 36, backgroundColor: '#333', borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Text style={{ color: '#fff', fontSize: 18 }}>-</Text>
-        </Pressable>
-        <View style={{ flex: 1, height: 4, backgroundColor: '#333', marginHorizontal: 8, borderRadius: 2 }}>
-          <View style={{
-            width: `${((value - min) / (max - min)) * 100}%`, height: '100%',
-            backgroundColor: '#fff', borderRadius: 2,
-          }} />
+    return (
+        <View style={styles.field}>
+            <Text style={styles.label}>{props.label}</Text>
+            <View style={styles.options}>
+                {props.options.map(option => (
+                    <Pressable
+                        key={option.value}
+                        onPress={() => props.onChange(option.value)}
+                        style={[styles.option, props.value === option.value && styles.optionActive]}
+                    >
+                        <Text style={[styles.optionText, props.value === option.value && styles.optionTextActive]}>{option.label}</Text>
+                    </Pressable>
+                ))}
+            </View>
         </View>
-        <Pressable
-          onPress={() => onChange(Math.min(max, value + (step ?? 1)))}
-          style={{ width: 36, height: 36, backgroundColor: '#333', borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}
-        >
-          <Text style={{ color: '#fff', fontSize: 18 }}>+</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
+    );
 }
 
-function ToggleControl({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-      <Text style={{ color: '#aaa', fontSize: 14 }}>{label}</Text>
-      <Switch value={value} onValueChange={onChange} trackColor={{ false: '#333', true: '#666' }} thumbColor={value ? '#fff' : '#888'} />
-    </View>
-  );
-}
+function CameraControls({ device }: { device: BluetoothRemoteGATTServer }) {
+    const camera = useDebug(device);
+    const [quality, setQuality] = React.useState(12);
+    const [brightness, setBrightness] = React.useState(0);
+    const [contrast, setContrast] = React.useState(0);
+    const [whiteBalance, setWhiteBalance] = React.useState(true);
+    const [mirror, setMirror] = React.useState(false);
 
-function CameraTab({ device }: { device: BluetoothRemoteGATTServer }) {
-  const ctrl = useDebug(device);
+    const step = (value: number, delta: number, min: number, max: number, apply: (next: number) => void) => {
+        const next = Math.max(min, Math.min(max, value + delta));
+        apply(next);
+        return next;
+    };
 
-  return (
-    <ScrollView style={{ flex: 1, padding: 16 }}>
-      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 12 }}>Frame Size</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-        {FRAMESIZE_OPTIONS.map(o => (
-          <Pressable
-            key={o.value}
-            onPress={() => ctrl.setFramesize(o.value)}
-            style={{
-              paddingHorizontal: 14, paddingVertical: 8, marginRight: 8,
-              backgroundColor: '#222', borderRadius: 8,
-              borderWidth: 1, borderColor: '#444',
-            }}
-          >
-            <Text style={{ color: '#fff', fontSize: 12 }}>{o.label}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-
-      <SliderControl label="JPEG Quality (lower=better)" value={12} min={10} max={63} step={1} onChange={ctrl.setQuality} />
-      <SliderControl label="Brightness" value={0} min={-2} max={2} step={1} onChange={ctrl.setBrightness} />
-      <SliderControl label="Contrast" value={0} min={-2} max={2} step={1} onChange={ctrl.setContrast} />
-      <SliderControl label="Saturation" value={0} min={-2} max={2} step={1} onChange={ctrl.setSaturation} />
-      <SliderControl label="AE Level" value={0} min={-2} max={2} step={1} onChange={ctrl.setAeLevel} />
-      <SliderControl label="AEC Value" value={300} min={0} max={1200} step={50} onChange={ctrl.setAecValue} />
-      <SliderControl label="Gain Ceiling" value={2} min={0} max={6} step={1} onChange={ctrl.setGainceiling} />
-
-      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 12, marginBottom: 12 }}>Toggles</Text>
-      <ToggleControl label="Auto White Balance" value={true} onChange={ctrl.toggleWhitebal} />
-      <ToggleControl label="AWB Gain" value={true} onChange={ctrl.toggleAwbGain} />
-      <ToggleControl label="Auto Exposure (AEC)" value={true} onChange={ctrl.toggleAec} />
-      <ToggleControl label="Auto Gain (AGC)" value={true} onChange={ctrl.toggleAgc} />
-      <ToggleControl label="Horizontal Mirror" value={false} onChange={ctrl.toggleHmirror} />
-      <ToggleControl label="Vertical Flip" value={false} onChange={ctrl.toggleVflip} />
-
-      <Pressable
-        onPress={ctrl.takeSinglePhoto}
-        style={{
-          marginTop: 16, backgroundColor: '#fff', paddingVertical: 14, borderRadius: 12, alignItems: 'center',
-        }}
-      >
-        <Text style={{ color: '#000', fontSize: 16, fontWeight: '700' }}>Take Single Photo</Text>
-      </Pressable>
-    </ScrollView>
-  );
-}
-
-function LLMTab() {
-  const [selectedProvider, setSelectedProvider] = React.useState<'openai' | 'groq' | 'ollama' | 'local'>('openai');
-  const [prompt, setPrompt] = React.useState('');
-  const [response, setResponse] = React.useState('');
-  const [loading, setLoading] = React.useState(false);
-  const [localUrl, setLocalUrl] = React.useState('');
-  const [testResult, setTestResult] = React.useState('');
-
-  const providers = ['openai', 'groq', 'ollama', 'local'] as const;
-
-  const runTest = async () => {
-    setTestResult('Testing...');
-    let result: string;
-    switch (selectedProvider) {
-      case 'openai': result = await testOpenAI(); break;
-      case 'groq': result = await testGroq(); break;
-      case 'ollama': result = await testOllama(); break;
-      case 'local': result = await testLocalLLM(localUrl || 'http://localhost:8001'); break;
-    }
-    setTestResult(result);
-  };
-
-  const sendPromptHandler = async () => {
-    if (!prompt.trim()) return;
-    setLoading(true);
-    setResponse('');
-    const result = await sendPrompt(selectedProvider, prompt);
-    setResponse(result);
-    setLoading(false);
-  };
-
-  return (
-    <ScrollView style={{ flex: 1, padding: 16 }}>
-      <Text style={{ color: '#fff', fontSize: 14, marginBottom: 8 }}>Provider</Text>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 16 }}>
-        {providers.map(p => (
-          <Pressable
-            key={p}
-            onPress={() => setSelectedProvider(p)}
-            style={{
-              paddingHorizontal: 16, paddingVertical: 8, marginRight: 8, marginBottom: 8,
-              backgroundColor: selectedProvider === p ? '#fff' : '#222',
-              borderRadius: 8,
-            }}
-          >
-            <Text style={{ color: selectedProvider === p ? '#000' : '#fff', fontSize: 13, fontWeight: '600' }}>
-              {p}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {selectedProvider === 'local' && (
-        <View style={{ marginBottom: 16 }}>
-          <Text style={{ color: '#aaa', fontSize: 12, marginBottom: 4 }}>Local LLM URL</Text>
-          <TextInput
-            value={localUrl}
-            onChangeText={setLocalUrl}
-            placeholder="http://localhost:8001"
-            placeholderTextColor="#555"
-            style={{
-              backgroundColor: '#222', color: '#fff', padding: 10, borderRadius: 8,
-              borderWidth: 1, borderColor: '#444', fontSize: 14,
-            }}
-          />
+    return (
+        <View>
+            <View style={styles.frameGrid}>
+                {FRAME_SIZES.map(([label, value]) => (
+                    <Pressable key={label} style={styles.frameOption} onPress={() => camera.setFramesize(value)}>
+                        <Text style={styles.frameText}>{label}</Text>
+                    </Pressable>
+                ))}
+            </View>
+            <Stepper label="JPEG 质量" value={quality} onMinus={() => setQuality(value => step(value, -1, 10, 63, camera.setQuality))} onPlus={() => setQuality(value => step(value, 1, 10, 63, camera.setQuality))} />
+            <Stepper label="亮度" value={brightness} onMinus={() => setBrightness(value => step(value, -1, -2, 2, camera.setBrightness))} onPlus={() => setBrightness(value => step(value, 1, -2, 2, camera.setBrightness))} />
+            <Stepper label="对比度" value={contrast} onMinus={() => setContrast(value => step(value, -1, -2, 2, camera.setContrast))} onPlus={() => setContrast(value => step(value, 1, -2, 2, camera.setContrast))} />
+            <Toggle label="自动白平衡" value={whiteBalance} onChange={value => { setWhiteBalance(value); camera.toggleWhitebal(value); }} />
+            <Toggle label="水平镜像" value={mirror} onChange={value => { setMirror(value); camera.toggleHmirror(value); }} />
+            <View style={styles.deviceCard}>
+                <InfoLine label="固件" value={camera.firmwareVersion || '读取中'} />
+                <InfoLine label="硬件" value={camera.hardwareVersion || '读取中'} />
+                <InfoLine label="序列号" value={camera.serialNumber || '读取中'} />
+                <InfoLine label="电量" value={camera.batteryLevel === null ? '未知' : `${camera.batteryLevel}%`} />
+            </View>
         </View>
-      )}
+    );
+}
 
-      <Pressable
-        onPress={runTest}
-        style={{
-          backgroundColor: '#333', paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginBottom: 16,
-        }}
-      >
-        <Text style={{ color: '#fff', fontSize: 14 }}>Test Connection</Text>
-      </Pressable>
-
-      {testResult ? (
-        <View style={{ backgroundColor: '#1a1a1a', padding: 10, borderRadius: 8, marginBottom: 16 }}>
-          <Text style={{ color: '#aaa', fontSize: 12, marginBottom: 4 }}>Test Result:</Text>
-          <Text style={{ color: '#fff', fontSize: 13 }}>{testResult}</Text>
+function Stepper(props: { label: string; value: number; onMinus: () => void; onPlus: () => void }) {
+    return (
+        <View style={styles.controlRow}>
+            <Text style={styles.controlLabel}>{props.label}</Text>
+            <View style={styles.stepper}>
+                <Pressable style={styles.stepButton} onPress={props.onMinus}><Text style={styles.stepText}>-</Text></Pressable>
+                <Text style={styles.stepValue}>{props.value}</Text>
+                <Pressable style={styles.stepButton} onPress={props.onPlus}><Text style={styles.stepText}>+</Text></Pressable>
+            </View>
         </View>
-      ) : null}
+    );
+}
 
-      <Text style={{ color: '#fff', fontSize: 14, marginBottom: 8 }}>Custom Prompt</Text>
-      <TextInput
-        value={prompt}
-        onChangeText={setPrompt}
-        placeholder="Enter a test prompt..."
-        placeholderTextColor="#555"
-        multiline
-        style={{
-          backgroundColor: '#222', color: '#fff', padding: 10, borderRadius: 8,
-          borderWidth: 1, borderColor: '#444', fontSize: 14, minHeight: 80, textAlignVertical: 'top',
-        }}
-      />
-
-      <Pressable
-        onPress={sendPromptHandler}
-        disabled={loading}
-        style={{
-          marginTop: 8, backgroundColor: '#fff', paddingVertical: 12, borderRadius: 8, alignItems: 'center',
-          opacity: loading ? 0.5 : 1,
-        }}
-      >
-        {loading ? (
-          <ActivityIndicator color="#000" size="small" />
-        ) : (
-          <Text style={{ color: '#000', fontSize: 14, fontWeight: '600' }}>Send</Text>
-        )}
-      </Pressable>
-
-      {response ? (
-        <View style={{ backgroundColor: '#1a1a1a', padding: 10, borderRadius: 8, marginTop: 12, marginBottom: 24 }}>
-          <Text style={{ color: '#8f8', fontSize: 11, marginBottom: 4 }}>Raw Response:</Text>
-          <Text style={{ color: '#ccc', fontSize: 11, fontFamily: 'monospace' }}>{response}</Text>
+function Toggle(props: { label: string; value: boolean; onChange: (value: boolean) => void }) {
+    return (
+        <View style={styles.controlRow}>
+            <Text style={styles.controlLabel}>{props.label}</Text>
+            <Switch value={props.value} onValueChange={props.onChange} trackColor={{ false: '#24373a', true: '#0f5e62' }} thumbColor={props.value ? '#65f2e8' : '#809497'} />
         </View>
-      ) : null}
-    </ScrollView>
-  );
+    );
 }
 
-function InfoTab({ device }: { device: BluetoothRemoteGATTServer }) {
-  const ctrl = useDebug(device);
-
-  return (
-    <ScrollView style={{ flex: 1, padding: 16 }}>
-      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 16 }}>Device Information</Text>
-
-      <InfoRow label="Firmware" value={ctrl.firmwareVersion || 'Unknown'} />
-      <InfoRow label="Hardware" value={ctrl.hardwareVersion || 'Unknown'} />
-      <InfoRow label="Serial" value={ctrl.serialNumber || 'Unknown'} />
-      <InfoRow label="Battery" value={ctrl.batteryLevel !== null ? `${ctrl.batteryLevel}%` : 'Unknown'} />
-
-      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 24, marginBottom: 12 }}>API Keys</Text>
-      <InfoRow label="OpenAI" value={maskKey(process.env.EXPO_PUBLIC_OPENAI_API_KEY)} />
-      <InfoRow label="Groq" value={maskKey(process.env.EXPO_PUBLIC_GROQ_API_KEY)} />
-      <InfoRow label="Ollama URL" value={process.env.EXPO_PUBLIC_OLLAMA_API_URL || 'Not set'} />
-    </ScrollView>
-  );
+function InfoLine(props: { label: string; value: string }) {
+    return <View style={styles.infoLine}><Text style={styles.infoLabel}>{props.label}</Text><Text style={styles.infoValue}>{props.value}</Text></View>;
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#222' }}>
-      <Text style={{ color: '#aaa', fontSize: 13 }}>{label}</Text>
-      <Text style={{ color: '#fff', fontSize: 13 }}>{value}</Text>
-    </View>
-  );
-}
+export const DebugView = React.memo((props: DebugViewProps) => {
+    const [testing, setTesting] = React.useState<string | null>(null);
+    const [testResult, setTestResult] = React.useState('');
+    const update = <K extends keyof ModelSettings>(key: K, value: ModelSettings[K]) => {
+        props.onSettingsChange({ ...props.settings, [key]: value });
+    };
+    const runTest = async (provider: 'openai' | 'groq' | 'ollama') => {
+        setTesting(provider);
+        setTestResult('');
+        try {
+            setTestResult(`${provider.toUpperCase()}：${await testProvider(provider, props.settings)}`);
+        } catch (error) {
+            setTestResult(String(error));
+        } finally {
+            setTesting(null);
+        }
+    };
 
-function maskKey(key?: string): string {
-  if (!key || key.length < 8) return 'Not set';
-  return key.slice(0, 4) + '...' + key.slice(-4);
-}
+    return (
+        <Modal transparent animationType="fade" onRequestClose={props.onClose}>
+            <View style={styles.overlay}>
+                <Pressable style={styles.scrim} onPress={props.onClose} />
+                <View style={styles.drawer}>
+                    <View style={styles.header}>
+                        <View><Text style={styles.kicker}>SYSTEM CONTROL</Text><Text style={styles.title}>高级控制台</Text></View>
+                        <Pressable style={styles.close} onPress={props.onClose}><Text style={styles.closeText}>X</Text></Pressable>
+                    </View>
+                    <ScrollView contentContainerStyle={styles.content}>
+                        <Text style={styles.sectionTitle}>模型流水线</Text>
+                        <OptionRow label="处理模式" value={props.settings.mode} options={[{ value: 'staged', label: '分阶段' }, { value: 'direct', label: 'OpenAI 直连' }]} onChange={value => update('mode', value)} />
+                        <OptionRow label="视觉模型" value={props.settings.visionProvider} options={[{ value: 'ollama', label: 'Ollama' }, { value: 'openai', label: 'OpenAI' }]} onChange={value => update('visionProvider', value)} />
+                        <OptionRow label="推理模型" value={props.settings.reasoningProvider} options={[{ value: 'groq', label: 'Groq' }, { value: 'openai', label: 'OpenAI' }, { value: 'ollama', label: 'Ollama' }]} onChange={value => update('reasoningProvider', value)} />
+                        <Field label="Ollama URL" value={props.settings.ollamaUrl} onChange={value => update('ollamaUrl', value)} />
+                        <Field label="Ollama 视觉模型" value={props.settings.ollamaVisionModel} onChange={value => update('ollamaVisionModel', value)} />
+                        <Field label="Ollama 推理模型" value={props.settings.ollamaReasoningModel} onChange={value => update('ollamaReasoningModel', value)} />
+                        <Field label="OpenAI 模型" value={props.settings.openAIModel} onChange={value => update('openAIModel', value)} />
+                        <Field label="Groq 模型" value={props.settings.groqModel} onChange={value => update('groqModel', value)} />
+                        <View style={styles.providerRow}>
+                            {(['openai', 'groq', 'ollama'] as const).map(provider => (
+                                <Pressable key={provider} style={styles.testButton} onPress={() => runTest(provider)} disabled={testing !== null}>
+                                    {testing === provider ? <ActivityIndicator color="#65f2e8" size="small" /> : <Text style={styles.testText}>{provider} {configuredProviders[provider] ? 'READY' : 'LOCAL'}</Text>}
+                                </Pressable>
+                            ))}
+                        </View>
+                        {testResult ? <Text style={styles.testResult}>{testResult}</Text> : null}
+                        <Text style={styles.warning}>云端 Key 来自 EXPO_PUBLIC 环境变量，仅适用于本地开发，禁止公开部署。</Text>
 
-export const DebugView = React.memo((props: { device: BluetoothRemoteGATTServer; onClose: () => void }) => {
-  const [tab, setTab] = React.useState<TabName>('camera');
+                        <Text style={styles.sectionTitle}>相机与设备</Text>
+                        {props.device ? <CameraControls device={props.device} /> : <Text style={styles.empty}>连接眼镜后可调整相机参数。</Text>}
 
-  return (
-    <View style={{ flex: 1, backgroundColor: Theme.background }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
-        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Debug</Text>
-        <Pressable onPress={props.onClose} style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: '#fff', fontSize: 22 }}>✕</Text>
-        </Pressable>
-      </View>
-      <TabBar active={tab} onSelect={setTab} />
-      {tab === 'camera' && <CameraTab device={props.device} />}
-      {tab === 'llm' && <LLMTab />}
-      {tab === 'info' && <InfoTab device={props.device} />}
-    </View>
-  );
+                        <Text style={styles.sectionTitle}>诊断日志</Text>
+                        <View style={styles.logs}>
+                            {props.diagnostics.length === 0 ? <Text style={styles.empty}>暂无日志</Text> : props.diagnostics.map(entry => (
+                                <View key={entry.id} style={styles.logLine}>
+                                    <Text style={[styles.logLevel, entry.level === 'error' && styles.logError, entry.level === 'warn' && styles.logWarn]}>{entry.level.toUpperCase()}</Text>
+                                    <Text style={styles.logTime}>{new Date(entry.timestamp).toLocaleTimeString('zh-CN')}</Text>
+                                    <Text style={styles.logMessage}>{entry.message.replace(/sk-[A-Za-z0-9_-]+/g, '[REDACTED]')}</Text>
+                                </View>
+                            ))}
+                        </View>
+                        <Pressable style={styles.dangerButton} onPress={props.onClearSessions}><Text style={styles.dangerText}>清空本地会话</Text></Pressable>
+                    </ScrollView>
+                </View>
+            </View>
+        </Modal>
+    );
+});
+
+const styles = StyleSheet.create({
+    overlay: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end' },
+    scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(1, 7, 8, 0.72)' },
+    drawer: { width: 'min(520px, 94vw)' as never, height: '100%', backgroundColor: '#0a1517', borderLeftWidth: 1, borderLeftColor: '#214247' },
+    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 24, borderBottomWidth: 1, borderBottomColor: '#173034' },
+    kicker: { color: '#49b8b3', fontSize: 10, letterSpacing: 2.4, fontFamily: 'Cascadia Mono' },
+    title: { color: '#effcf9', fontSize: 24, fontWeight: '700', marginTop: 5, fontFamily: 'Bahnschrift' },
+    close: { width: 36, height: 36, borderWidth: 1, borderColor: '#315257', alignItems: 'center', justifyContent: 'center' },
+    closeText: { color: '#a8bfbe', fontFamily: 'Cascadia Mono' },
+    content: { padding: 24, paddingBottom: 60 },
+    sectionTitle: { color: '#65f2e8', fontSize: 12, letterSpacing: 1.8, fontWeight: '700', marginTop: 8, marginBottom: 16, fontFamily: 'Cascadia Mono' },
+    field: { marginBottom: 15 }, label: { color: '#7e999b', fontSize: 11, marginBottom: 7, letterSpacing: 0.7 },
+    input: { backgroundColor: '#0e2023', borderWidth: 1, borderColor: '#244247', color: '#e8f5f2', paddingHorizontal: 12, paddingVertical: 10, fontFamily: 'Cascadia Mono', fontSize: 12 },
+    options: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+    option: { paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#29484d', backgroundColor: '#0c1b1d' },
+    optionActive: { backgroundColor: '#65f2e8', borderColor: '#65f2e8' }, optionText: { color: '#8ca4a5', fontSize: 11 }, optionTextActive: { color: '#061011', fontWeight: '700' },
+    providerRow: { flexDirection: 'row', gap: 8, marginTop: 4 }, testButton: { flex: 1, minHeight: 38, borderWidth: 1, borderColor: '#315257', alignItems: 'center', justifyContent: 'center' }, testText: { color: '#b7cdca', fontSize: 9, fontFamily: 'Cascadia Mono' },
+    testResult: { color: '#9cb7b4', backgroundColor: '#071012', padding: 12, marginTop: 10, fontFamily: 'Cascadia Mono', fontSize: 11 },
+    warning: { color: '#e9b65c', backgroundColor: '#241d0f', borderLeftWidth: 2, borderLeftColor: '#e9b65c', padding: 12, marginTop: 12, fontSize: 11, lineHeight: 17 },
+    frameGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 14 }, frameOption: { borderWidth: 1, borderColor: '#28484c', paddingHorizontal: 10, paddingVertical: 7 }, frameText: { color: '#a8bfbe', fontSize: 10, fontFamily: 'Cascadia Mono' },
+    controlRow: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#172c30' }, controlLabel: { color: '#9eb5b3', fontSize: 12 },
+    stepper: { flexDirection: 'row', alignItems: 'center', gap: 10 }, stepButton: { width: 28, height: 28, borderWidth: 1, borderColor: '#315257', alignItems: 'center', justifyContent: 'center' }, stepText: { color: '#65f2e8', fontSize: 16 }, stepValue: { color: '#eef8f6', width: 30, textAlign: 'center', fontFamily: 'Cascadia Mono' },
+    deviceCard: { backgroundColor: '#071012', padding: 12, marginTop: 14 }, infoLine: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 7 }, infoLabel: { color: '#607a7c', fontSize: 11 }, infoValue: { color: '#b8cdca', fontFamily: 'Cascadia Mono', fontSize: 11 },
+    logs: { backgroundColor: '#061012', borderWidth: 1, borderColor: '#183237', padding: 10, maxHeight: 320 }, logLine: { flexDirection: 'row', alignItems: 'flex-start', gap: 7, paddingVertical: 5 }, logLevel: { color: '#65f2e8', width: 38, fontSize: 8, fontFamily: 'Cascadia Mono' }, logWarn: { color: '#e9b65c' }, logError: { color: '#ff8075' }, logTime: { color: '#496568', width: 62, fontSize: 9, fontFamily: 'Cascadia Mono' }, logMessage: { color: '#8ca7a6', flex: 1, fontSize: 10, lineHeight: 15, fontFamily: 'Cascadia Mono' },
+    empty: { color: '#60787a', fontSize: 12, paddingVertical: 16 }, dangerButton: { marginTop: 22, borderWidth: 1, borderColor: '#703d3b', padding: 12, alignItems: 'center' }, dangerText: { color: '#ff8d83', fontSize: 12, fontWeight: '700' },
 });

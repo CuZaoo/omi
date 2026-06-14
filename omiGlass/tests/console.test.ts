@@ -13,8 +13,9 @@ function equal(actual: unknown, expected: unknown, message: string): void {
     assert(JSON.stringify(actual) === JSON.stringify(expected), `${message}: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
 }
 
-equal(Array.from(encodeSingleCapture()), [1, 0, 0], 'single capture command');
-equal(Array.from(encodeStopCapture()), [2, 0, 0], 'stop capture command');
+equal(Array.from(encodeSingleCapture()), [0xff], 'legacy-compatible single capture command');
+equal(Array.from(encodeStopCapture()), [0], 'legacy-compatible stop capture command');
+equal(Array.from(encodeIntervalCapture(30)), [30], 'legacy-compatible interval command');
 equal(Array.from(encodeIntervalCapture(300)), [3, 44, 1], '300 second interval command');
 equal(decodeCaptureStatus(new Uint8Array([2, 30, 0])), { mode: 'interval', intervalSeconds: 30 }, 'capture status');
 

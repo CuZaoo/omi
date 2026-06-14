@@ -2,6 +2,29 @@
 
 This document provides comprehensive instructions for building, flashing, and managing the OMI Glass firmware.
 
+## Photo Control BLE Protocol
+
+The `PHOTO_CONTROL_UUID` characteristic supports read, write, and notify operations.
+
+### Version 2 commands
+
+Commands use three bytes: `[command, interval_seconds_low, interval_seconds_high]`.
+
+| Command | Value | Behavior |
+| --- | --- | --- |
+| Single | `0x01` | Capture one frame; interval bytes are zero |
+| Stop | `0x02` | Stop interval capture; interval bytes are zero |
+| Interval | `0x03` | Start capture with a little-endian interval from 5 to 300 seconds |
+
+Status notifications use `[mode, interval_seconds_low, interval_seconds_high]`, where mode is `0` for stopped, `1` for
+single capture, and `2` for interval capture. A single capture returns to the stopped status after the firmware schedules
+the frame.
+
+### Legacy compatibility
+
+Existing clients remain supported: `0xFF` captures one frame, `0x00` stops capture, and a one-byte value from 5 to 127
+starts interval capture using that value in seconds.
+
 ## 1. Flashing with UF2 (Easiest Method)
 
 The UF2 (USB Flashing Format) method is the simplest way to flash your ESP32-S3 device by dragging and dropping a file.

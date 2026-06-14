@@ -45,7 +45,7 @@
 // CAMERA CONFIGURATION - Power optimized for 6-8 hour battery life
 // =============================================================================
 #define CAMERA_FRAME_SIZE FRAMESIZE_VGA // 640x480 - optimal balance
-#define CAMERA_JPEG_QUALITY 12          // Higher quality for clearer images
+#define CAMERA_JPEG_QUALITY 15          // Balanced quality for fast transfer (12=higher/slower, 18=faster/lower)
 #define CAMERA_XCLK_FREQ 20000000       // 20MHz - standard OV2640 XCLK frequency
 #define CAMERA_FB_IN_PSRAM CAMERA_FB_IN_PSRAM
 #define CAMERA_GRAB_LATEST CAMERA_GRAB_LATEST
@@ -76,7 +76,7 @@ typedef enum {
 // BLE CONFIGURATION - Power optimized for extended battery life
 // =============================================================================
 #define BLE_MTU_SIZE 517            // Maximum MTU for efficiency
-#define BLE_CHUNK_SIZE 500          // Safe chunk size for photo transfer
+#define BLE_CHUNK_SIZE 240          // Data bytes per BLE notify chunk (close to 247 MTU limit)
 #define BLE_PHOTO_TRANSFER_DELAY 3  // Fast transfer for connection stability
 #define BLE_TX_POWER ESP_PWR_LVL_N0 // Low power for 6+ hour battery life
 
@@ -93,8 +93,8 @@ typedef enum {
 #define BLE_TASK_PRIORITY 1
 
 // Connection Parameters for Stable Connections with Power Optimization
-#define BLE_CONN_MIN_INTERVAL 20 // 25ms minimum connection interval (was 20ms)
-#define BLE_CONN_MAX_INTERVAL 40 // 50ms maximum connection interval (was 40ms)
+#define BLE_CONN_MIN_INTERVAL 12 // 15ms minimum connection interval (was 20=25ms)
+#define BLE_CONN_MAX_INTERVAL 24 // 30ms maximum connection interval (was 40=50ms)
 #define BLE_CONN_LATENCY 0       // No latency for immediate response
 #define BLE_CONN_TIMEOUT 400     // 4 second supervision timeout (faster disconnect detection)
 

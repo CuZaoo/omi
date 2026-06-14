@@ -82,6 +82,7 @@ bool isCapturingPhotos = false;
 int captureInterval = 0; // Interval in ms
 unsigned long lastCaptureTime = 0;
 bool singleShotPending = false; // High-priority single shot
+unsigned long captureRequestMs = 0; // Timestamp when capture was requested (for latency measurement)
 bool liveStreamActive = false;
 unsigned long liveStreamInterval = 1500;
 int savedQuality = 12; // Restore quality after hi-res capture
@@ -437,8 +438,26 @@ class ServerHandler : public BLEServerCallbacks
         audioSubscribed = false;
         lastActivity = millis(); // Register activity - prevents sleep
         Serial.println(">>> BLE Client connected.");
-        // Send current battery level on connect
         updateBatteryService();
+    }
+    void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override
+    {
+        connected = true;
+        audioSubscribed = false;
+        lastActivity = millis();
+        Serial.println(">>> BLE Client connected.");
+        updateBatteryService();
+
+        if (param) {
+            // Request faster connection interval for responsive photo transfer
+            // Units: 1.25ms per count. Min 12 = 15ms, Max 16 = 20ms.
+            server->updateConnParams(param->connect.remote_bda,
+                                     BLE_CONN_MIN_INTERVAL,
+                                     BLE_CONN_MAX_INTERVAL,
+                                     BLE_CONN_LATENCY,
+                                     BLE_CONN_TIMEOUT);
+            Serial.println("BLE connection params updated (15-30ms interval, 4s supervision).");
+        }
     }
     void onDisconnect(BLEServer *server) override
     {
@@ -1126,8 +1145,8 @@ void setup_app()
     configure_ble();
     configure_camera();
 
-    // Allocate buffer for photo chunks (200 bytes + 2 for frame index)
-    s_compressed_frame_2 = (uint8_t *) ps_calloc(202, sizeof(uint8_t));
+    // Allocate buffer for photo chunks (chunk_size + 2/3 for frame index + orientation)
+    s_compressed_frame_2 = (uint8_t *) ps_calloc(BLE_CHUNK_SIZE + 3, sizeof(uint8_t));
     if (!s_compressed_frame_2) {
         Serial.println("Failed to allocate chunk buffer!");
     } else {
@@ -1220,8 +1239,13 @@ void loop_app()
     // High-priority single shot (bypasses photoDataUploading gate)
     if (singleShotPending && connected && !photoDataUploading) {
         singleShotPending = false;
+        unsigned long t0 = micros();
         Serial.println("Single shot triggered (high priority).");
         if (take_photo()) {
+            unsigned long t1 = micros();
+            Serial.print("Capture+encode latency: ");
+            Serial.print(t1 - t0);
+            Serial.println(" us");
             photoDataUploading = true;
             sent_photo_bytes = 0;
             sent_photo_frames = 0;
@@ -1260,9 +1284,15 @@ void loop_app()
         }
     }
 
+    // Log BLE transfer start once per photo
+    static unsigned long bleTransferStart = 0;
+
     // If uploading, send chunks over BLE (interleave with audio - max 2 chunks per loop)
     static int photo_chunks_this_loop = 0;
     if (photoDataUploading && fb && photo_chunks_this_loop < 2) {
+        if (bleTransferStart == 0) {
+            bleTransferStart = micros(); // Start of BLE xfer for this photo
+        }
         // Yield to audio if audio buffer has data
         if (audioSubscribed && audio_tx_read_pos != audio_tx_write_pos) {
             photo_chunks_this_loop = 0; // Reset for next loop
@@ -1277,14 +1307,14 @@ void loop_app()
                 s_compressed_frame_2[0] = 0; // Frame index low byte
                 s_compressed_frame_2[1] = 0; // Frame index high byte
                 s_compressed_frame_2[2] = (uint8_t) current_photo_orientation;
-                bytes_to_copy = (remaining > 199) ? 199 : remaining;
+                bytes_to_copy = (remaining > BLE_CHUNK_SIZE - 1) ? BLE_CHUNK_SIZE - 1 : remaining;
                 memcpy(&s_compressed_frame_2[3], &fb->buf[sent_photo_bytes], bytes_to_copy);
                 photoDataCharacteristic->setValue(s_compressed_frame_2, bytes_to_copy + 3);
             } else {
                 // Subsequent chunks
                 s_compressed_frame_2[0] = (uint8_t) (sent_photo_frames & 0xFF);
                 s_compressed_frame_2[1] = (uint8_t) ((sent_photo_frames >> 8) & 0xFF);
-                bytes_to_copy = (remaining > 200) ? 200 : remaining;
+                bytes_to_copy = (remaining > BLE_CHUNK_SIZE) ? BLE_CHUNK_SIZE : remaining;
                 memcpy(&s_compressed_frame_2[2], &fb->buf[sent_photo_bytes], bytes_to_copy);
                 photoDataCharacteristic->setValue(s_compressed_frame_2, bytes_to_copy + 2);
             }
@@ -1308,6 +1338,11 @@ void loop_app()
             s_compressed_frame_2[1] = 0xFF;
             photoDataCharacteristic->setValue(s_compressed_frame_2, 2);
             photoDataCharacteristic->notify();
+            unsigned long bleElapsed = micros() - bleTransferStart;
+            Serial.print("Photo BLE transfer latency: ");
+            Serial.print(bleElapsed);
+            Serial.println(" us");
+            bleTransferStart = 0;
             Serial.println("Photo upload complete.");
 
             photoDataUploading = false;

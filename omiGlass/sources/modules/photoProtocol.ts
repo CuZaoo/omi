@@ -8,6 +8,39 @@ export const PHOTO_COMMAND = {
     captureHiRes: 0x05,
 } as const;
 
+export const STREAM_COMMAND = {
+    connectWifi: 0x06,
+    disconnect: 0x07,
+    scan: 0x08,
+} as const;
+
+export const STREAM_STATUS_BYTE = {
+    idle: 0x00,
+    connecting: 0x51,
+    connected: 0x52,
+    failed: 0x53,
+    disconnected: 0x54,
+} as const;
+
+export const SCAN_MARKER = {
+    result: 0x60,
+    done: 0x61,
+} as const;
+
+export interface StreamStatus {
+    status: number;
+    ip: string;
+}
+
+export interface ScanEntry {
+    ssid: string;
+    rssi: number;
+    connected?: boolean;
+    source?: 'computer' | 'glass';
+    band?: string;
+    compatible?: boolean;
+}
+
 export interface PhotoPacketResult {
     data: Uint8Array;
     orientation: 0 | 1 | 2 | 3;
@@ -50,6 +83,33 @@ export function encodeLiveStream(
 
 export function encodeCaptureHiRes(): Uint8Array {
     return new Uint8Array([PHOTO_COMMAND.captureHiRes]);
+}
+
+export function encodeStreamConnectWifi(ssid: string, password: string): Uint8Array {
+    const ssidBytes = new TextEncoder().encode(ssid);
+    const passBytes = new TextEncoder().encode(password);
+    const buf = new Uint8Array(1 + 1 + ssidBytes.length + 1 + passBytes.length);
+    buf[0] = STREAM_COMMAND.connectWifi;
+    buf[1] = ssidBytes.length;
+    buf.set(ssidBytes, 2);
+    buf[2 + ssidBytes.length] = passBytes.length;
+    buf.set(passBytes, 3 + ssidBytes.length);
+    return buf;
+}
+
+export function encodeStreamDisconnect(): Uint8Array {
+    return new Uint8Array([STREAM_COMMAND.disconnect]);
+}
+
+export function encodeScanNetworks(): Uint8Array {
+    return new Uint8Array([STREAM_COMMAND.scan, 0x00, 0x00]);
+}
+
+export function decodeStreamStatus(data: Uint8Array): { status: number; ip: string } | null {
+    if (data.length < 1) return null;
+    const status = data[0];
+    const ip = data.length > 1 ? new TextDecoder().decode(data.slice(1)) : '';
+    return { status, ip };
 }
 
 export function decodeCaptureStatus(data: Uint8Array): { mode: CaptureMode; intervalSeconds: number } | null {
@@ -128,4 +188,20 @@ export class PhotoAssembler {
         this.byteLength += data.length;
         return null;
     }
+}
+
+export function decodeScanResult(data: Uint8Array): ScanEntry | null {
+    if (data.length < 3 || data[0] !== SCAN_MARKER.result) return null;
+    const ssidLen = data[1];
+    if (data.length < 3 + ssidLen) return null;
+    const ssid = new TextDecoder().decode(data.slice(2, 2 + ssidLen));
+    const rssi = new DataView(data.buffer, data.byteOffset, data.byteLength).getInt8(2 + ssidLen);
+    return { ssid, rssi, source: 'glass' };
+}
+
+export function isScanDone(data: Uint8Array): number | null {
+    if (data.length >= 2 && data[0] === SCAN_MARKER.done) {
+        return data[1];
+    }
+    return null;
 }

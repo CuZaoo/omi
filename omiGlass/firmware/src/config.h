@@ -164,7 +164,7 @@ typedef enum {
 #define PHOTO_STATUS_INTERVAL 0x02
 
 // Camera Control Commands (written to CAMERA_CONTROL_UUID)
-#define CAM_CMD_SET_FRAMESIZE 0x01   // +1 byte: framesize (0=96x96...10=SVGA)
+#define CAM_CMD_SET_FRAMESIZE 0x01   // +1 byte: framesize (0=96x96...13=UXGA)
 #define CAM_CMD_SET_QUALITY 0x02     // +1 byte: JPEG quality (10-63, lower=better)
 #define CAM_CMD_SET_BRIGHTNESS 0x03  // +1 byte: -2 to 2
 #define CAM_CMD_SET_CONTRAST 0x04    // +1 byte: -2 to 2
@@ -178,6 +178,16 @@ typedef enum {
 #define CAM_CMD_SET_VFLIP 0x0C       // +1 byte: 0=off, 1=on
 #define CAM_CMD_SET_AEC 0x0D         // +1 byte: 0=off, 1=on
 #define CAM_CMD_SET_AGC 0x0E         // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_WB_MODE 0x0F     // +1 byte: 0=auto, 1=sunny, 2=cloudy, 3=office, 4=home
+#define CAM_CMD_SET_AGC_GAIN 0x10    // +1 byte: 0-30
+#define CAM_CMD_SET_AEC2 0x11        // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_EFFECT 0x12      // +1 byte: 0-6
+#define CAM_CMD_SET_BPC 0x13         // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_WPC 0x14         // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_RAW_GMA 0x15     // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_LENC 0x16        // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_DCW 0x17         // +1 byte: 0=off, 1=on
+#define CAM_CMD_SET_COLORBAR 0x18    // +1 byte: 0=off, 1=on
 
 // Battery Service UUID - Cast to uint16_t for BLE compatibility
 #define BATTERY_SERVICE_UUID (uint16_t) 0x180F

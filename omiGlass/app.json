@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Dude where’s my car?",
-    "slug": "find-anything",
+    "name": "OMI Glass Optical Lab",
+    "slug": "omi-glass-optical-lab",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "splash": {
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#071012"
     },
     "assetBundlePatterns": ["**/*"],
     "ios": {
@@ -31,9 +31,6 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["react-native-ble-plx"],
-    "experiments": {
-      "baseUrl": "/llama3-hackaton"
-    }
+    "plugins": ["react-native-ble-plx"]
   }
 }

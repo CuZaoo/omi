@@ -1,6 +1,10 @@
-export function rotateImage(src: Uint8Array, angle: '90' | '180' | '270') {
+export function rotateImage(src: Uint8Array, angle: '0' | '90' | '180' | '270') {
+    if (angle === '0') {
+        return Promise.resolve(src);
+    }
     return new Promise<Uint8Array>((resolve, reject) => {
         const img = new Image();
+        const objectUrl = URL.createObjectURL(new Blob([src]));
         img.onload = () => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d')!;
@@ -13,14 +17,20 @@ export function rotateImage(src: Uint8Array, angle: '90' | '180' | '270') {
                 if (blob) {
                     const reader = new FileReader();
                     reader.onload = () => {
+                        URL.revokeObjectURL(objectUrl);
                         resolve(new Uint8Array(reader.result as ArrayBuffer));
                     };
                     reader.readAsArrayBuffer(blob);
                 } else {
+                    URL.revokeObjectURL(objectUrl);
                     reject('Failed to rotate image');
                 }
             }, 'image/jpeg');
         };
-        img.src = URL.createObjectURL(new Blob([src]));
+        img.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            reject('Failed to load image');
+        };
+        img.src = objectUrl;
     });
 }

@@ -11,10 +11,8 @@
 // =============================================================================
 // DEVICE CONFIGURATION
 // =============================================================================
-#define BLE_DEVICE_NAME "OMI Glass"
-#define FIRMWARE_VERSION_STRING "2.3.2"
+#define BLE_DEVICE_NAME "OMI Glass V2"
 #define HARDWARE_REVISION "ESP32-S3-v1.0"
-#define MANUFACTURER_NAME "Based Hardware"
 
 // =============================================================================
 // POWER MANAGEMENT - Optimized for MINIMUM 6-8 hours, targeting 10+ hours
@@ -45,7 +43,7 @@
 // CAMERA CONFIGURATION - Power optimized for 6-8 hour battery life
 // =============================================================================
 #define CAMERA_FRAME_SIZE FRAMESIZE_VGA // 640x480 - optimal balance
-#define CAMERA_JPEG_QUALITY 15          // Balanced quality for fast transfer (12=higher/slower, 18=faster/lower)
+#define CAMERA_JPEG_QUALITY 12          // High quality for clearer detail
 #define CAMERA_XCLK_FREQ 20000000       // 20MHz - standard OV2640 XCLK frequency
 #define CAMERA_FB_IN_PSRAM CAMERA_FB_IN_PSRAM
 #define CAMERA_GRAB_LATEST CAMERA_GRAB_LATEST
@@ -75,8 +73,8 @@ typedef enum {
 // =============================================================================
 // BLE CONFIGURATION - Power optimized for extended battery life
 // =============================================================================
-#define BLE_MTU_SIZE 517            // Maximum MTU for efficiency
-#define BLE_CHUNK_SIZE 240          // Data bytes per BLE notify chunk (close to 247 MTU limit)
+#define BLE_MTU_SIZE 512            // ESP32 BLE stack maximum accepted local MTU
+#define BLE_CHUNK_SIZE 500          // Data bytes per BLE notify chunk
 #define BLE_PHOTO_TRANSFER_DELAY 3  // Fast transfer for connection stability
 #define BLE_TX_POWER ESP_PWR_LVL_N0 // Low power for 6+ hour battery life
 
@@ -148,12 +146,13 @@ typedef enum {
 // =============================================================================
 // BLE UUID DEFINITIONS - OMI Protocol
 // =============================================================================
-#define OMI_SERVICE_UUID "19B10000-E8F2-537E-4F6C-D104768A1214"
+#define OMI_SERVICE_UUID "19B10020-E8F2-537E-4F6C-D104768A1214"
 #define AUDIO_DATA_UUID "19B10001-E8F2-537E-4F6C-D104768A1214"
 #define AUDIO_CODEC_UUID "19B10002-E8F2-537E-4F6C-D104768A1214"
 #define PHOTO_DATA_UUID "19B10005-E8F2-537E-4F6C-D104768A1214"
 #define PHOTO_CONTROL_UUID "19B10006-E8F2-537E-4F6C-D104768A1214"
 #define CAMERA_CONTROL_UUID "19B10007-E8F2-537E-4F6C-D104768A1214"
+#define STREAM_STATUS_UUID "19B10008-E8F2-537E-4F6C-D104768A1214"
 
 // Photo Control v2 commands: [command, ...params]
 #define PHOTO_CMD_SINGLE 0x01
@@ -232,6 +231,25 @@ typedef enum {
 #define WIFI_MAX_SSID_LEN 32
 #define WIFI_MAX_PASS_LEN 64
 #define OTA_MAX_URL_LEN 256
+
+// Stream Control (WiFi video streaming)
+#define STREAM_CMD_CONNECT_WIFI 0x06 // + ssid_len, ssid, pass_len, pass
+#define STREAM_CMD_DISCONNECT 0x07   // Stop streaming and disconnect WiFi
+#define STREAM_CMD_SCAN 0x08         // Scan nearby WiFi networks
+
+#define STREAM_SCAN_RESULT 0x60 // Marker for scan result entry
+#define STREAM_SCAN_DONE 0x61   // Marker for scan complete
+
+#define STREAM_STATUS_IDLE 0x00
+#define STREAM_STATUS_CONNECTING 0x51
+#define STREAM_STATUS_CONNECTED 0x52
+#define STREAM_STATUS_FAILED 0x53
+#define STREAM_STATUS_DISCONNECTED 0x54
+
+#define STREAM_PORT 80
+#define STREAM_FRAMESIZE FRAMESIZE_QVGA
+#define STREAM_JPEG_QUALITY 20
+#define STREAM_BOUNDARY "--omistream123"
 
 // =============================================================================
 // PIN DEFINITIONS (from camera_pins.h integration)

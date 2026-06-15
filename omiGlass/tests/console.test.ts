@@ -1,5 +1,6 @@
 import { normalizeLocalWifiScan } from '../sources/modules/localWifi';
 import { OMI_SERVICE_UUID_LEGACY, OMI_SERVICE_UUID_V2, OMI_SERVICE_UUID_V3, OMI_SERVICE_UUIDS } from '../sources/modules/bluetoothProtocol';
+import { runGattOperation } from '../sources/modules/gattQueue';
 import { PhotoAssembler, decodeCaptureStatus, decodeScanResult, encodeIntervalCapture, encodeSingleCapture, encodeStopCapture } from '../sources/modules/photoProtocol';
 import { canEnqueueAnalysis, responseText } from '../sources/modules/providers';
 import { retainRecentSessions } from '../sources/modules/sessionStorage';
@@ -63,4 +64,13 @@ equal(responseText({ output: [{ content: [{ type: 'output_text', text: 'vision r
 const retained = retainRecentSessions(Array.from({ length: 12 }, (_, index) => ({ id: index, updatedAt: index })));
 equal(retained.map(item => item.id), [11, 10, 9, 8, 7, 6, 5, 4, 3, 2], 'session retention');
 
-console.log('omiGlass console assertions passed');
+export const consoleAssertions = (async () => {
+    const fakeDevice = { connected: true } as BluetoothRemoteGATTServer;
+    const order: number[] = [];
+    await Promise.all([
+        runGattOperation(fakeDevice, async () => { order.push(1); }),
+        runGattOperation(fakeDevice, async () => { order.push(2); }),
+    ]);
+    equal(order, [1, 2], 'GATT operations must remain serialized');
+    console.log('omiGlass console assertions passed');
+})();

@@ -12,6 +12,9 @@ static String s_ip = "";
 static int s_status = 0; // 0=idle, 1=connecting, 2=connected, 3=failed
 static WebServer *s_server = nullptr;
 static TaskHandle_t s_stream_task = nullptr;
+static TaskHandle_t s_connect_task = nullptr;
+static char s_pending_ssid[WIFI_MAX_SSID_LEN + 1] = {};
+static char s_pending_password[WIFI_MAX_PASS_LEN + 1] = {};
 
 static void set_camera_for_streaming()
 {
@@ -103,25 +106,23 @@ static void stream_task(void *param)
     vTaskDelete(NULL);
 }
 
-void streamer_start(const char *ssid, const char *password)
+static void connect_task(void *param)
 {
     if (s_running) {
         streamer_stop();
         delay(500);
     }
 
-    s_status = 1; // connecting
-    s_ip = "";
-
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
+    WiFi.begin(s_pending_ssid, s_pending_password);
 
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED) {
         if (millis() - start > WIFI_CONNECT_TIMEOUT_MS) {
             s_status = 3; // failed
+            s_connect_task = nullptr;
             Serial.println("[streamer] WiFi connect timeout");
-            return;
+            vTaskDelete(NULL);
         }
         delay(200);
         Serial.print(".");
@@ -134,6 +135,27 @@ void streamer_start(const char *ssid, const char *password)
     Serial.printf("[streamer] WiFi connected, IP: %s\n", s_ip.c_str());
 
     xTaskCreatePinnedToCore(stream_task, "stream_task", 8192, NULL, 1, &s_stream_task, 1);
+    s_connect_task = nullptr;
+    vTaskDelete(NULL);
+}
+
+void streamer_start(const char *ssid, const char *password)
+{
+    if (s_connect_task) {
+        Serial.println("[streamer] connection already in progress");
+        return;
+    }
+
+    strlcpy(s_pending_ssid, ssid, sizeof(s_pending_ssid));
+    strlcpy(s_pending_password, password, sizeof(s_pending_password));
+    s_status = 1; // connecting
+    s_ip = "";
+    BaseType_t result = xTaskCreatePinnedToCore(connect_task, "wifi_connect", 4096, NULL, 1, &s_connect_task, 1);
+    if (result != pdPASS) {
+        s_connect_task = nullptr;
+        s_status = 3;
+        Serial.println("[streamer] failed to create WiFi connection task");
+    }
 }
 
 void streamer_stop()

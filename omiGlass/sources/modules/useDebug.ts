@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { getOmiService } from './bluetoothProtocol';
+import { runGattOperation, writeGattValue } from './gattQueue';
 
 const CAMERA_CONTROL_UUID = '19b10007-e8f2-537e-4f6c-d104768a1214';
 const CAMERA_SETTINGS_KEY = 'openglass:cameraSettings';
@@ -145,17 +146,20 @@ export function useDebug(device: BluetoothRemoteGATTServer | null) {
         void (async () => {
             try {
                 const service = await getOmiService(device);
-                characteristicRef.current = await service.getCharacteristic(CAMERA_CONTROL_UUID);
+                characteristicRef.current = await runGattOperation(device, () => service.getCharacteristic(CAMERA_CONTROL_UUID));
             } catch (characteristicError) {
                 if (!cancelled) {
                     setError(`相机控制通道不可用：${String(characteristicError)}`);
                 }
             }
             try {
-                const infoService = await device.getPrimaryService('device_information');
-                const firmware = await (await infoService.getCharacteristic('firmware_revision_string')).readValue();
-                const hardware = await (await infoService.getCharacteristic('hardware_revision_string')).readValue();
-                const serial = await (await infoService.getCharacteristic('serial_number_string')).readValue();
+                const infoService = await runGattOperation(device, () => device.getPrimaryService('device_information'));
+                const firmwareCharacteristic = await runGattOperation(device, () => infoService.getCharacteristic('firmware_revision_string'));
+                const hardwareCharacteristic = await runGattOperation(device, () => infoService.getCharacteristic('hardware_revision_string'));
+                const serialCharacteristic = await runGattOperation(device, () => infoService.getCharacteristic('serial_number_string'));
+                const firmware = await runGattOperation(device, () => firmwareCharacteristic.readValue());
+                const hardware = await runGattOperation(device, () => hardwareCharacteristic.readValue());
+                const serial = await runGattOperation(device, () => serialCharacteristic.readValue());
                 if (!cancelled) {
                     setFirmwareVersion(new TextDecoder().decode(firmware));
                     setHardwareVersion(new TextDecoder().decode(hardware));
@@ -181,10 +185,10 @@ export function useDebug(device: BluetoothRemoteGATTServer | null) {
         let interval: ReturnType<typeof setInterval> | undefined;
         void (async () => {
             try {
-                const batteryService = await device.getPrimaryService(0x180f);
-                const batteryCharacteristic = await batteryService.getCharacteristic(0x2a19);
+                const batteryService = await runGattOperation(device, () => device.getPrimaryService(0x180f));
+                const batteryCharacteristic = await runGattOperation(device, () => batteryService.getCharacteristic(0x2a19));
                 const readBattery = async () => {
-                    const value = await batteryCharacteristic.readValue();
+                    const value = await runGattOperation(device, () => batteryCharacteristic.readValue());
                     setBatteryLevel(value.getUint8(0));
                 };
                 await readBattery();
@@ -205,8 +209,11 @@ export function useDebug(device: BluetoothRemoteGATTServer | null) {
         if (!characteristic) {
             throw new Error('相机控制通道尚未就绪');
         }
-        await characteristic.writeValue(encodeCameraSetting(key, value));
-    }, []);
+        if (!device) {
+            throw new Error('GATT 连接已断开。');
+        }
+        await writeGattValue(device, characteristic, encodeCameraSetting(key, value));
+    }, [device]);
 
     const setSetting = React.useCallback(async <K extends CameraSettingKey>(key: K, value: CameraSettings[K]) => {
         setSettingsState(current => {

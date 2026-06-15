@@ -133,6 +133,8 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
                 }
 
                 const service = await getOmiService(device);
+                const discoveredCharacteristics = await service.getCharacteristics();
+                log('info', `[DIAG] GATT TABLE: ${discoveredCharacteristics.map(item => item.uuid).join(', ')}`);
 
                 try {
                     photoCharacteristic = await service.getCharacteristic(PHOTO_DATA_UUID);
@@ -146,7 +148,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
                     log('info', '[DIAG] PHOTO_CONTROL (19b10006) FOUND');
                 } catch (e) {
                     log('warn', `[DIAG] PHOTO_CONTROL (19b10006) NOT FOUND: ${e}`);
-                    log('warn', '当前固件只能接收照片，不能执行拍摄或 WiFi 写入命令；请更新眼镜固件。');
+                    log('warn', '眼镜控制特征未注册，当前连接不能执行拍摄或 WiFi 写入命令。');
                 }
                 controlRef.current = controlCharacteristic;
                 setCaptureReady(Boolean(controlCharacteristic));

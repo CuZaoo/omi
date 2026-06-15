@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { getOmiService } from './bluetoothProtocol';
 import { rotateImage } from './imaging';
 import { scanLocalWifi } from './localWifi';
 import {
@@ -20,7 +21,6 @@ import {
 } from './photoProtocol';
 import { CaptureState, DiagnosticEntry, FrameRecord } from '../types/console';
 
-const OMI_SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
 const PHOTO_DATA_UUID = '19b10005-e8f2-537e-4f6c-d104768a1214';
 const PHOTO_CONTROL_UUID = '19b10006-e8f2-537e-4f6c-d104768a1214';
 const STREAM_STATUS_UUID = '19b10008-e8f2-537e-4f6c-d104768a1214';
@@ -132,7 +132,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
                     log('warn', `电量服务不可用：${String(error)}`);
                 }
 
-                const service = await device.getPrimaryService(OMI_SERVICE_UUID);
+                const service = await getOmiService(device);
 
                 try {
                     photoCharacteristic = await service.getCharacteristic(PHOTO_DATA_UUID);

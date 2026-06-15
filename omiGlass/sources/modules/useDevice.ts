@@ -4,7 +4,7 @@ import { OMI_SERVICE_UUIDS } from './bluetoothProtocol';
 
 const DEVICE_STORAGE_KEY = 'openglassDeviceId';
 const DEVICE_PROTOCOL_STORAGE_KEY = 'openglassDeviceProtocol';
-const DEVICE_PROTOCOL_VERSION = '2';
+const DEVICE_PROTOCOL_VERSION = '3';
 export const RECONNECT_DELAYS = [500, 1000, 2000];
 
 type BluetoothWithDevices = Bluetooth & {

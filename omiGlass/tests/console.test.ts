@@ -1,5 +1,5 @@
 import { normalizeLocalWifiScan } from '../sources/modules/localWifi';
-import { OMI_SERVICE_UUID_LEGACY, OMI_SERVICE_UUID_V2, OMI_SERVICE_UUIDS } from '../sources/modules/bluetoothProtocol';
+import { OMI_SERVICE_UUID_LEGACY, OMI_SERVICE_UUID_V2, OMI_SERVICE_UUID_V3, OMI_SERVICE_UUIDS } from '../sources/modules/bluetoothProtocol';
 import { PhotoAssembler, decodeCaptureStatus, decodeScanResult, encodeIntervalCapture, encodeSingleCapture, encodeStopCapture } from '../sources/modules/photoProtocol';
 import { canEnqueueAnalysis, responseText } from '../sources/modules/providers';
 import { retainRecentSessions } from '../sources/modules/sessionStorage';
@@ -50,7 +50,7 @@ const legacyFrame = legacyAssembler.push(null, new Uint8Array());
 equal(legacyFrame?.orientation, 2, 'legacy firmware rotation');
 
 equal(RECONNECT_DELAYS, [500, 1000, 2000], 'reconnect backoff');
-equal(OMI_SERVICE_UUIDS, [OMI_SERVICE_UUID_V2, OMI_SERVICE_UUID_LEGACY], 'V2 service must precede legacy fallback');
+equal(OMI_SERVICE_UUIDS, [OMI_SERVICE_UUID_V3, OMI_SERVICE_UUID_V2, OMI_SERVICE_UUID_LEGACY], 'latest service must precede legacy fallbacks');
 const devices = [{ id: 'first' }, { id: 'target' }] as BluetoothDevice[];
 equal(findStoredDevice(devices, 'target')?.id, 'target', 'stored device restoration');
 assert(findStoredDevice(devices, 'missing') === null, 'missing stored device');

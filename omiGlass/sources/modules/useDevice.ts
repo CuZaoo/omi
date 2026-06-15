@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { DeviceStatus } from '../types/console';
+import { OMI_SERVICE_UUIDS } from './bluetoothProtocol';
 
 const DEVICE_STORAGE_KEY = 'openglassDeviceId';
+const DEVICE_PROTOCOL_STORAGE_KEY = 'openglassDeviceProtocol';
+const DEVICE_PROTOCOL_VERSION = '2';
 export const RECONNECT_DELAYS = [500, 1000, 2000];
-const OMI_SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
 
 type BluetoothWithDevices = Bluetooth & {
     getDevices?: () => Promise<BluetoothDevice[]>;
@@ -89,6 +91,7 @@ export function useDevice(): DeviceController {
             throw new Error('设备未提供可用的 GATT 服务。');
         }
         localStorage.setItem(DEVICE_STORAGE_KEY, candidate.id);
+        localStorage.setItem(DEVICE_PROTOCOL_STORAGE_KEY, DEVICE_PROTOCOL_VERSION);
         setDevice(gatt);
         setStatus('connected');
     }, [attachDevice]);
@@ -102,7 +105,8 @@ export function useDevice(): DeviceController {
 
         const bluetooth = navigator.bluetooth as BluetoothWithDevices;
         const storedId = localStorage.getItem(DEVICE_STORAGE_KEY);
-        if (!storedId || !bluetooth.getDevices) {
+        const storedProtocol = localStorage.getItem(DEVICE_PROTOCOL_STORAGE_KEY);
+        if (!storedId || storedProtocol !== DEVICE_PROTOCOL_VERSION || !bluetooth.getDevices) {
             setStatus('idle');
             return;
         }
@@ -139,8 +143,8 @@ export function useDevice(): DeviceController {
         }
         try {
             const candidate = await navigator.bluetooth.requestDevice({
-                filters: [{ name: 'OMI Glass' }],
-                optionalServices: [OMI_SERVICE_UUID, 'device_information', 0x180f],
+                filters: [{ namePrefix: 'OMI Glass' }],
+                optionalServices: [...OMI_SERVICE_UUIDS, 'device_information', 0x180f],
             });
             await connectCandidate(candidate, 'connecting');
         } catch (connectError) {

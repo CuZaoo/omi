@@ -1350,6 +1350,13 @@ void setup_app()
 
 void loop_app()
 {
+    static int lastStreamStatus = -1;
+    int currentStreamStatus = streamer_get_status();
+    if (currentStreamStatus != lastStreamStatus) {
+        lastStreamStatus = currentStreamStatus;
+        notifyStreamStatus();
+    }
+
     unsigned long now = millis();
 
     // Handle button presses

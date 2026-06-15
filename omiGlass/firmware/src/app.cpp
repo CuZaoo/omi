@@ -1046,6 +1046,13 @@ void handlePhotoControl(const uint8_t *data, size_t len)
     } else if (command == STREAM_CMD_SCAN) {
         Serial.println("Stream: WiFi scan requested");
         xTaskCreate(wifi_scan_task, "wifi_scan", 8192, NULL, 1, NULL);
+    } else if (command == STREAM_CMD_SET_CONFIG && len >= 3) {
+        int fs = data[1];
+        int q = data[2];
+        if (q < 10) q = 10;
+        if (q > 63) q = 63;
+        Serial.printf("Stream: set config framesize=%d quality=%d\n", fs, q);
+        streamer_set_config(fs, q);
     } else {
         Serial.printf("PhotoControl: invalid command=0x%02x interval=%u\n", command, intervalSeconds);
     }

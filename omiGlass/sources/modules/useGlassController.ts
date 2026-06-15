@@ -429,6 +429,17 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
         setTimeout(() => setScanning(false), 15000);
     }, [device, log]);
 
+    const setWifiStreamConfig = React.useCallback(async (framesize: number, quality: number) => {
+        const characteristic = controlRef.current;
+        if (!device || !characteristic) return;
+        try {
+            await writeGattValue(device, characteristic, encodeStreamSetConfig(framesize, quality));
+            log('info', `WiFi 流画质已设置: framesize=${framesize} quality=${quality}`);
+        } catch (error) {
+            log('error', `WiFi 流画质设置失败: ${String(error)}`);
+        }
+    }, [device, log]);
+
     return {
         subscribed,
         captureReady,
@@ -450,6 +461,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
         connectWifi,
         disconnectWifi,
         scanNetworks,
+        setWifiStreamConfig,
         scanResults,
         scanning,
         scanError,

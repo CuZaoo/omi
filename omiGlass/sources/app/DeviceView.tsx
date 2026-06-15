@@ -166,6 +166,8 @@ export const DeviceView = React.memo(({ deviceController }: { deviceController: 
     const [liveStreamActive, setLiveStreamActive] = React.useState(false);
     const [wifiSsid, setWifiSsid] = React.useState(() => localStorage.getItem('omi:wifiSsid') || '');
     const [wifiPass, setWifiPass] = React.useState(() => localStorage.getItem('omi:wifiPass') || '');
+    const [streamFramesize, setStreamFramesize] = React.useState(5);
+    const [streamQuality, setStreamQuality] = React.useState(35);
     const selectedWifi = glass.scanResults.find(network => network.ssid === wifiSsid);
     const wifiCompatible = selectedWifi?.compatible !== false;
 
@@ -492,6 +494,64 @@ export const DeviceView = React.memo(({ deviceController }: { deviceController: 
                             </Pressable>
                         )}
                     </View>
+                    {glass.stream.status === 0x52 ? (
+                        <View style={styles.streamConfig}>
+                            <Text style={{...styles.controlEyebrow, marginTop: 12, marginBottom: 8}}>STREAM QUALITY</Text>
+                            <View style={styles.streamPresetRow}>
+                                {[
+                                    {label: '流畅', fs: 1, q: 35, desc: '160×120 高速'},
+                                    {label: '均衡', fs: 5, q: 35, desc: '320×240'},
+                                    {label: '清晰', fs: 8, q: 20, desc: '640×480 高清'},
+                                ].map(p => (
+                                    <Pressable key={p.label} onPress={() => {
+                                        setStreamFramesize(p.fs);
+                                        setStreamQuality(p.q);
+                                        glass.setWifiStreamConfig(p.fs, p.q);
+                                    }} style={[styles.streamPresetBtn, streamFramesize === p.fs && streamQuality === p.q && styles.streamPresetActive]}>
+                                        <Text style={[styles.streamPresetLabel, streamFramesize === p.fs && streamQuality === p.q && styles.streamPresetLabelActive]}>{p.label}</Text>
+                                        <Text style={styles.streamPresetDesc}>{p.desc}</Text>
+                                    </Pressable>
+                                ))}
+                            </View>
+                            <Text style={styles.streamConfigLabel}>分辨率</Text>
+                            <View style={styles.streamResRow}>
+                                {[
+                                    {label: 'QQVGA', dim: '160×120', fs: 1},
+                                    {label: 'QVGA', dim: '320×240', fs: 5},
+                                    {label: 'HVGA', dim: '480×320', fs: 7},
+                                    {label: 'VGA', dim: '640×480', fs: 8},
+                                ].map(r => (
+                                    <Pressable key={r.fs} onPress={() => {
+                                        setStreamFramesize(r.fs);
+                                        glass.setWifiStreamConfig(r.fs, streamQuality);
+                                    }} style={[styles.streamResBtn, streamFramesize === r.fs && styles.streamResActive]}>
+                                        <Text style={[styles.streamResLabel, streamFramesize === r.fs && styles.streamResLabelActive]}>{r.label}</Text>
+                                        <Text style={styles.streamResDim}>{r.dim}</Text>
+                                    </Pressable>
+                                ))}
+                            </View>
+                            <Text style={styles.streamConfigLabel}>画质 {streamQuality}/63 · {streamQuality < 20 ? '高清/慢' : streamQuality > 45 ?  '流畅/低清' : '均衡'}</Text>
+                            <View style={styles.streamQualityRow}>
+                                <Pressable onPress={() => {
+                                    const q = Math.max(10, streamQuality - 1);
+                                    setStreamQuality(q);
+                                    glass.setWifiStreamConfig(streamFramesize, q);
+                                }} style={styles.streamQualityBtn}>
+                                    <Text style={styles.streamQualityBtnText}>−</Text>
+                                </Pressable>
+                                <View style={styles.streamQualityTrack}>
+                                    <View style={[styles.streamQualityFill, {width: `${((streamQuality - 10) / (63 - 10)) * 100}%`}]} />
+                                </View>
+                                <Pressable onPress={() => {
+                                    const q = Math.min(63, streamQuality + 1);
+                                    setStreamQuality(q);
+                                    glass.setWifiStreamConfig(streamFramesize, q);
+                                }} style={styles.streamQualityBtn}>
+                                    <Text style={styles.streamQualityBtnText}>+</Text>
+                                </Pressable>
+                            </View>
+                        </View>
+                    ) : null}
                 </View>
             </View>
         </View>
@@ -640,5 +700,5 @@ const styles = StyleSheet.create({
     modelBadge: { borderWidth: 1, borderColor: '#35575a', paddingHorizontal: 8, paddingVertical: 5 }, modelBadgeText: { color: '#65f2e8', fontSize: 8, letterSpacing: 1, fontFamily: 'Cascadia Mono' }, contextCard: { margin: 10, padding: 12, borderLeftWidth: 2, borderLeftColor: '#e9b65c', backgroundColor: '#17170f' }, contextTitle: { color: '#d6d7bf', fontSize: 11, fontWeight: '700', marginTop: 5 }, contextDescription: { color: '#8f927c', fontSize: 10, lineHeight: 15, marginTop: 6 }, chatScroll: { flex: 1, minHeight: 0 }, chatContent: { padding: 10, gap: 9 }, chatIntro: { minHeight: 220, alignItems: 'center', justifyContent: 'center', padding: 24 }, message: { padding: 11, maxWidth: '92%' }, userMessage: { alignSelf: 'flex-end', backgroundColor: '#153a3c', borderRightWidth: 2, borderRightColor: '#65f2e8' }, assistantMessage: { alignSelf: 'flex-start', backgroundColor: '#111f21', borderLeftWidth: 2, borderLeftColor: '#e9b65c' }, messageRole: { color: '#568487', fontSize: 7, letterSpacing: 1, fontFamily: 'Cascadia Mono', marginBottom: 5 }, messageText: { color: '#c6d4d2', fontSize: 11, lineHeight: 17 }, composer: { minHeight: 78, padding: 10, flexDirection: 'row', gap: 8, borderTopWidth: 1, borderTopColor: '#173135' }, questionInput: { flex: 1, minHeight: 54, maxHeight: 100, backgroundColor: '#071113', borderWidth: 1, borderColor: '#274448', color: '#d9e7e5', padding: 10, textAlignVertical: 'top', fontSize: 11 }, sendButton: { width: 58, backgroundColor: '#e9b65c', alignItems: 'center', justifyContent: 'center' }, sendText: { color: '#171207', fontSize: 10, fontWeight: '800' },
     tabs: { flexDirection: 'row', paddingHorizontal: 10, paddingTop: 10, gap: 6 }, tab: { flex: 1, height: 38, borderWidth: 1, borderColor: '#244347', alignItems: 'center', justifyContent: 'center' }, tabActive: { backgroundColor: '#65f2e8', borderColor: '#65f2e8' }, tabText: { color: '#789294', fontSize: 10, fontWeight: '700' }, tabTextActive: { color: '#061112' },
     footer: { minHeight: 30, paddingHorizontal: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#152d30', backgroundColor: '#071012' }, footerText: { color: '#405f62', fontSize: 8, fontFamily: 'Cascadia Mono' }, footerAction: { color: '#5fb8b4', fontSize: 9, fontWeight: '700' },
-    wifiSection: { borderTopWidth: 1, borderTopColor: '#173135', paddingTop: 12, marginTop: 10 }, wifiSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, wifiScanBtn: { paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#3a6f72' }, wifiScanText: { color: '#8dc7c4', fontSize: 9, fontWeight: '700' }, wifiHint: { color: '#587477', fontSize: 9, lineHeight: 14, marginTop: 7 }, currentWifi: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8, paddingHorizontal: 10, paddingVertical: 8, borderLeftWidth: 2, borderLeftColor: '#65f2e8', backgroundColor: '#0b2224' }, currentWifiLabel: { color: '#6c9293', fontSize: 9 }, currentWifiName: { color: '#65f2e8', fontSize: 10, fontWeight: '700', fontFamily: 'Cascadia Mono' }, wifiError: { color: '#ff9187', backgroundColor: '#291414', borderLeftWidth: 2, borderLeftColor: '#ff6f65', padding: 8, marginTop: 8, fontSize: 9, lineHeight: 14 }, scanList: { marginTop: 8, maxHeight: 140, borderWidth: 1, borderColor: '#1b3f42', backgroundColor: '#060f11' }, scanItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#142e31' }, scanSsid: { color: '#c5d9d7', fontSize: 10, flex: 1 }, scanSsidUnsupported: { color: '#8a7773' }, scanRssi: { color: '#60898b', fontSize: 8, fontFamily: 'Cascadia Mono', marginLeft: 8 }, scanRssiUnsupported: { color: '#d69572' }, wifiRow: { flexDirection: 'row', gap: 6, marginTop: 8 }, wifiInput: { flex: 1, height: 36, backgroundColor: '#071113', borderWidth: 1, borderColor: '#274448', color: '#d9e7e5', paddingHorizontal: 10, fontSize: 11 }, wifiInputPass: { flex: 0.8 }, wifiConnectBtn: { minHeight: 36, paddingHorizontal: 12, backgroundColor: '#65f2e8', alignItems: 'center', justifyContent: 'center' }, wifiConnectText: { color: '#061112', fontSize: 10, fontWeight: '800' }, wifiDisconnectBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#77504a' }, wifiDisconnectText: { color: '#e8a79e', fontSize: 10, fontWeight: '800' }, wifiStreamInfo: { marginTop: 7, padding: 6, backgroundColor: '#0c2224', borderWidth: 1, borderColor: '#26494c' }, wifiStreamText: { color: '#65f2e8', fontSize: 9, fontFamily: 'Cascadia Mono' },
+    wifiSection: { borderTopWidth: 1, borderTopColor: '#173135', paddingTop: 12, marginTop: 10 }, wifiSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, wifiScanBtn: { paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#3a6f72' }, wifiScanText: { color: '#8dc7c4', fontSize: 9, fontWeight: '700' }, wifiHint: { color: '#587477', fontSize: 9, lineHeight: 14, marginTop: 7 }, currentWifi: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 8, paddingHorizontal: 10, paddingVertical: 8, borderLeftWidth: 2, borderLeftColor: '#65f2e8', backgroundColor: '#0b2224' }, currentWifiLabel: { color: '#6c9293', fontSize: 9 }, currentWifiName: { color: '#65f2e8', fontSize: 10, fontWeight: '700', fontFamily: 'Cascadia Mono' }, wifiError: { color: '#ff9187', backgroundColor: '#291414', borderLeftWidth: 2, borderLeftColor: '#ff6f65', padding: 8, marginTop: 8, fontSize: 9, lineHeight: 14 }, scanList: { marginTop: 8, maxHeight: 140, borderWidth: 1, borderColor: '#1b3f42', backgroundColor: '#060f11' }, scanItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#142e31' }, scanSsid: { color: '#c5d9d7', fontSize: 10, flex: 1 }, scanSsidUnsupported: { color: '#8a7773' }, scanRssi: { color: '#60898b', fontSize: 8, fontFamily: 'Cascadia Mono', marginLeft: 8 }, scanRssiUnsupported: { color: '#d69572' }, wifiRow: { flexDirection: 'row', gap: 6, marginTop: 8 }, wifiInput: { flex: 1, height: 36, backgroundColor: '#071113', borderWidth: 1, borderColor: '#274448', color: '#d9e7e5', paddingHorizontal: 10, fontSize: 11 }, wifiInputPass: { flex: 0.8 }, wifiConnectBtn: { minHeight: 36, paddingHorizontal: 12, backgroundColor: '#65f2e8', alignItems: 'center', justifyContent: 'center' }, wifiConnectText: { color: '#061112', fontSize: 10, fontWeight: '800' }, wifiDisconnectBtn: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#77504a' }, wifiDisconnectText: { color: '#e8a79e', fontSize: 10, fontWeight: '800' }, wifiStreamInfo: { marginTop: 7, padding: 6, backgroundColor: '#0c2224', borderWidth: 1, borderColor: '#26494c' }, wifiStreamText: { color: '#65f2e8', fontSize: 9, fontFamily: 'Cascadia Mono' }, streamConfig: { marginTop: 6 }, streamPresetRow: { flexDirection: 'row', gap: 5, marginBottom: 10 }, streamPresetBtn: { flex: 1, borderWidth: 1, borderColor: '#28484c', paddingVertical: 7, alignItems: 'center' }, streamPresetActive: { borderColor: '#65f2e8', backgroundColor: '#102e30' }, streamPresetLabel: { color: '#aac2c0', fontSize: 9, fontWeight: '700' }, streamPresetLabelActive: { color: '#65f2e8' }, streamPresetDesc: { color: '#587477', fontSize: 7, marginTop: 2, fontFamily: 'Cascadia Mono' }, streamConfigLabel: { color: '#6c9293', fontSize: 9, marginBottom: 6, fontFamily: 'Cascadia Mono' }, streamResRow: { flexDirection: 'row', gap: 5, marginBottom: 10 }, streamResBtn: { flex: 1, borderWidth: 1, borderColor: '#28484c', paddingVertical: 6, alignItems: 'center' }, streamResActive: { borderColor: '#65f2e8', backgroundColor: '#0c2628' }, streamResLabel: { color: '#8bb3b2', fontSize: 8, fontWeight: '700' }, streamResLabelActive: { color: '#65f2e8' }, streamResDim: { color: '#4d7578', fontSize: 7, marginTop: 1, fontFamily: 'Cascadia Mono' }, streamQualityRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }, streamQualityBtn: { width: 28, height: 28, borderWidth: 1, borderColor: '#3a6f72', alignItems: 'center', justifyContent: 'center' }, streamQualityBtnText: { color: '#8dc7c4', fontSize: 14, fontWeight: '700' }, streamQualityTrack: { flex: 1, height: 8, backgroundColor: '#142e31', borderRadius: 4, overflow: 'hidden' }, streamQualityFill: { height: 8, backgroundColor: '#65f2e8', borderRadius: 4 },
 });

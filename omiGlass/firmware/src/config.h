@@ -237,6 +237,7 @@ typedef enum {
 #define STREAM_CMD_CONNECT_WIFI 0x06 // + ssid_len, ssid, pass_len, pass
 #define STREAM_CMD_DISCONNECT 0x07   // Stop streaming and disconnect WiFi
 #define STREAM_CMD_SCAN 0x08         // Scan nearby WiFi networks
+#define STREAM_CMD_SET_CONFIG 0x09  // + framesize, quality
 
 #define STREAM_SCAN_RESULT 0x60 // Marker for scan result entry
 #define STREAM_SCAN_DONE 0x61   // Marker for scan complete

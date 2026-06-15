@@ -12,6 +12,7 @@ export const STREAM_COMMAND = {
     connectWifi: 0x06,
     disconnect: 0x07,
     scan: 0x08,
+    setConfig: 0x09,
 } as const;
 
 export const STREAM_STATUS_BYTE = {
@@ -103,6 +104,10 @@ export function encodeStreamDisconnect(): Uint8Array {
 
 export function encodeScanNetworks(): Uint8Array {
     return new Uint8Array([STREAM_COMMAND.scan, 0x00, 0x00]);
+}
+
+export function encodeStreamSetConfig(framesize: number, quality: number): Uint8Array {
+    return new Uint8Array([STREAM_COMMAND.setConfig, framesize, quality]);
 }
 
 export function decodeStreamStatus(data: Uint8Array): { status: number; ip: string } | null {

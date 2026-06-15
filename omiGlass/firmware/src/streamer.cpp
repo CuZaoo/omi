@@ -6,10 +6,14 @@
 #include "config.h"
 #include "esp_camera.h"
 
+extern void notifyStreamStatus();
+
 static bool s_running = false;
 static bool s_streaming = false;
 static String s_ip = "";
-static int s_status = 0; // 0=idle, 1=connecting, 2=connected, 3=failed
+static int s_status = STREAM_STATUS_IDLE;
+static framesize_t s_framesize = STREAM_FRAMESIZE;
+static int s_quality = STREAM_JPEG_QUALITY;
 static WebServer *s_server = nullptr;
 static TaskHandle_t s_stream_task = nullptr;
 static TaskHandle_t s_connect_task = nullptr;
@@ -22,12 +26,12 @@ static void set_camera_for_streaming()
     if (!s)
         return;
     framesize_t old_fs = s->status.framesize;
-    if (old_fs != STREAM_FRAMESIZE) {
-        s->set_framesize(s, STREAM_FRAMESIZE);
+    if (old_fs != s_framesize) {
+        s->set_framesize(s, s_framesize);
     }
     int old_q = s->status.quality;
-    if (old_q != STREAM_JPEG_QUALITY) {
-        s->set_quality(s, STREAM_JPEG_QUALITY);
+    if (old_q != s_quality) {
+        s->set_quality(s, s_quality);
     }
 }
 
@@ -119,9 +123,10 @@ static void connect_task(void *param)
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED) {
         if (millis() - start > WIFI_CONNECT_TIMEOUT_MS) {
-            s_status = 3; // failed
+            s_status = STREAM_STATUS_FAILED;
             s_connect_task = nullptr;
             Serial.println("[streamer] WiFi connect timeout");
+            notifyStreamStatus();
             vTaskDelete(NULL);
         }
         delay(200);
@@ -130,10 +135,11 @@ static void connect_task(void *param)
     Serial.println();
 
     s_ip = WiFi.localIP().toString();
-    s_status = 2; // connected
+    s_status = STREAM_STATUS_CONNECTED;
     s_running = true;
     Serial.printf("[streamer] WiFi connected, IP: %s\n", s_ip.c_str());
 
+    notifyStreamStatus();
     xTaskCreatePinnedToCore(stream_task, "stream_task", 8192, NULL, 1, &s_stream_task, 1);
     s_connect_task = nullptr;
     vTaskDelete(NULL);
@@ -148,13 +154,14 @@ void streamer_start(const char *ssid, const char *password)
 
     strlcpy(s_pending_ssid, ssid, sizeof(s_pending_ssid));
     strlcpy(s_pending_password, password, sizeof(s_pending_password));
-    s_status = 1; // connecting
+    s_status = STREAM_STATUS_CONNECTING;
     s_ip = "";
     BaseType_t result = xTaskCreatePinnedToCore(connect_task, "wifi_connect", 4096, NULL, 1, &s_connect_task, 1);
     if (result != pdPASS) {
         s_connect_task = nullptr;
-        s_status = 3;
+        s_status = STREAM_STATUS_FAILED;
         Serial.println("[streamer] failed to create WiFi connection task");
+        notifyStreamStatus();
     }
 }
 
@@ -168,9 +175,10 @@ void streamer_stop()
     }
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
-    s_status = 0; // idle
+    s_status = STREAM_STATUS_IDLE;
     s_ip = "";
     Serial.println("[streamer] stopped");
+    notifyStreamStatus();
 }
 
 bool streamer_is_running()
@@ -186,4 +194,24 @@ String streamer_get_ip()
 int streamer_get_status()
 {
     return s_status;
+}
+
+void streamer_set_config(int framesize, int quality)
+{
+    s_framesize = (framesize_t) framesize;
+    s_quality = quality;
+    if (s_running && s_streaming) {
+        set_camera_for_streaming();
+    }
+    Serial.printf("[streamer] config updated: framesize=%d quality=%d\n", framesize, quality);
+}
+
+int streamer_get_framesize()
+{
+    return s_framesize;
+}
+
+int streamer_get_quality()
+{
+    return s_quality;
 }

@@ -113,7 +113,11 @@ export function encodeStreamSetConfig(framesize: number, quality: number): Uint8
 export function decodeStreamStatus(data: Uint8Array): { status: number; ip: string } | null {
     if (data.length < 1) return null;
     const status = data[0];
-    const ip = data.length > 1 ? new TextDecoder().decode(data.slice(1)) : '';
+    const rawIp = data.length > 1 ? new TextDecoder().decode(data.slice(1)) : '';
+    // Firmware may notify a C string / fixed buffer for the IP address. Strip
+    // trailing NUL bytes before using it in an <img src>, otherwise the browser
+    // sees e.g. "http://192.168.1.68\u0000/stream" and never requests the stream.
+    const ip = rawIp.split('\0')[0].trim();
     return { status, ip };
 }
 

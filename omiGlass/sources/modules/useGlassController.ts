@@ -15,6 +15,7 @@ import {
     encodeStopCapture,
     encodeStreamConnectWifi,
     encodeStreamDisconnect,
+    encodeStreamSetConfig,
     isScanDone,
     PhotoAssembler,
     ScanEntry,

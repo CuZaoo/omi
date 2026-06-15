@@ -46,6 +46,7 @@ static void restore_camera_settings()
 
 static void stream_task(void *param)
 {
+    Serial.println("[stream] stream_task started, creating WebServer");
     s_server = new WebServer(STREAM_PORT);
 
     s_server->on("/stream", HTTP_GET, []() {
@@ -54,21 +55,33 @@ static void stream_task(void *param)
             return;
 
         s_streaming = true;
+        Serial.println("[stream] set_camera_for_streaming start");
         set_camera_for_streaming();
+        sensor_t *s = esp_camera_sensor_get();
+        if (s) {
+            Serial.printf("[stream] sensor after config: framesize=%d quality=%d\n", s->status.framesize, s->status.quality);
+        }
+        delay(200);  // Let sensor stabilize after config change
+        Serial.println("[stream] sensor stabilized, starting stream");
 
         client.println("HTTP/1.1 200 OK");
         client.print("Content-Type: multipart/x-mixed-replace; boundary=");
         client.println(STREAM_BOUNDARY);
         client.println("Cache-Control: no-cache");
         client.println("Pragma: no-cache");
-        client.println("Connection: close");
+        client.println("Connection: keep-alive");
         client.println();
 
+        int frameCount = 0;
         while (client.connected() && s_running) {
             camera_fb_t *fb = esp_camera_fb_get();
             if (!fb) {
+                Serial.println("[stream] fb_get returned NULL");
                 delay(10);
                 continue;
+            }
+            if (frameCount < 3) {
+                Serial.printf("[stream] frame %d: len=%d buf=%p\n", frameCount, fb->len, fb->buf);
             }
 
             client.print("--");
@@ -77,8 +90,14 @@ static void stream_task(void *param)
             client.print("Content-Length: ");
             client.println(fb->len);
             client.println();
-            client.write(fb->buf, fb->len);
+            size_t written = client.write(fb->buf, fb->len);
             client.println();
+            client.flush();
+
+            if (frameCount < 3) {
+                Serial.printf("[stream] frame %d: written=%d flush ok\n", frameCount, written);
+            }
+            frameCount++;
 
             esp_camera_fb_return(fb);
         }

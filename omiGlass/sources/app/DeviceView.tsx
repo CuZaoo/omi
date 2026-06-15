@@ -25,6 +25,7 @@ import { clearSessions, createSession, loadLatestSession, MAX_SESSION_FRAMES, sa
 import { ChatMessage, FrameRecord, ModelSettings, PipelineStage, SessionRecord } from '../types/console';
 import { toBase64, toBase64Image } from '../utils/base64';
 import { DebugView } from './DebugView';
+import { MjpegStream } from '../components/MjpegStream';
 
 type WorkspaceTab = 'vision' | 'frames' | 'assistant';
 
@@ -351,11 +352,10 @@ export const DeviceView = React.memo(({ deviceController }: { deviceController: 
             </View>
             <View style={styles.preview}>
                 {glass.stream.status === 0x52 && glass.stream.ip ? (
-                    <Image
+                    <MjpegStream
                         key={`stream-${glass.stream.ip}`}
-                        source={{ uri: `http://${glass.stream.ip}/stream` }}
+                        uri={`http://${glass.stream.ip}/stream`}
                         style={styles.previewImage}
-                        resizeMode="contain"
                     />
                 ) : selectedFrame ? (
                     <Image key={selectedFrame.id} source={{ uri: toBase64Image(selectedFrame.data) }} style={styles.previewImage} resizeMode="contain" />

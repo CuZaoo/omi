@@ -685,7 +685,7 @@ void configure_ble()
     server->setCallbacks(new ServerHandler());
 
     // Main service
-    BLEService *service = server->createService(serviceUUID);
+    BLEService *service = server->createService(serviceUUID, OMI_SERVICE_HANDLE_COUNT);
 
     // Audio Data characteristic (for streaming audio to app)
     Serial.println("[BLE] creating AUDIO_DATA (19b10001)");
@@ -803,6 +803,13 @@ void configure_ble()
 
     // Start services
     service->start();
+    Serial.printf("[BLE] handles audio=%04x codec=%04x photo=%04x control=%04x camera=%04x stream=%04x\n",
+                  audioDataCharacteristic->getHandle(),
+                  audioCodecCharacteristic->getHandle(),
+                  photoDataCharacteristic->getHandle(),
+                  photoControlCharacteristic->getHandle(),
+                  cameraControlCharacteristic->getHandle(),
+                  streamStatusCharacteristic->getHandle());
     batteryService->start();
     otaService->start();
 

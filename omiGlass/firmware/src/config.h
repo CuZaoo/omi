@@ -11,7 +11,7 @@
 // =============================================================================
 // DEVICE CONFIGURATION
 // =============================================================================
-#define BLE_DEVICE_NAME "OMI Glass V2"
+#define BLE_DEVICE_NAME "OMI Glass V3"
 #define HARDWARE_REVISION "ESP32-S3-v1.0"
 
 // =============================================================================
@@ -146,7 +146,8 @@ typedef enum {
 // =============================================================================
 // BLE UUID DEFINITIONS - OMI Protocol
 // =============================================================================
-#define OMI_SERVICE_UUID "19B10020-E8F2-537E-4F6C-D104768A1214"
+#define OMI_SERVICE_UUID "19B10030-E8F2-537E-4F6C-D104768A1214"
+#define OMI_SERVICE_HANDLE_COUNT 32
 #define AUDIO_DATA_UUID "19B10001-E8F2-537E-4F6C-D104768A1214"
 #define AUDIO_CODEC_UUID "19B10002-E8F2-537E-4F6C-D104768A1214"
 #define PHOTO_DATA_UUID "19B10005-E8F2-537E-4F6C-D104768A1214"

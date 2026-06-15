@@ -1,7 +1,7 @@
 import * as React from 'react';
+import { getOmiService } from './bluetoothProtocol';
 
 const CAMERA_CONTROL_UUID = '19b10007-e8f2-537e-4f6c-d104768a1214';
-const OMI_SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
 const CAMERA_SETTINGS_KEY = 'openglass:cameraSettings';
 
 export const CAMERA_COMMAND = {
@@ -144,7 +144,7 @@ export function useDebug(device: BluetoothRemoteGATTServer | null) {
         let cancelled = false;
         void (async () => {
             try {
-                const service = await device.getPrimaryService(OMI_SERVICE_UUID);
+                const service = await getOmiService(device);
                 characteristicRef.current = await service.getCharacteristic(CAMERA_CONTROL_UUID);
             } catch (characteristicError) {
                 if (!cancelled) {

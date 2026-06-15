@@ -5,6 +5,7 @@
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEUtils.h>
+#include <WiFi.h>
 
 #include "config.h" // Use config.h for all configurations
 #include "esp_camera.h"
@@ -12,6 +13,7 @@
 #include "mic.h"
 #include "opus_encoder.h"
 #include "ota.h"
+#include "streamer.h"
 
 // Battery state
 float batteryVoltage = 0.0f;
@@ -38,14 +40,6 @@ bool lightSleepEnabled = true;
 // BLE - Using config.h definitions
 // ---------------------------------------------------------------------------------
 
-// Device Information Service UUIDs
-#define DEVICE_INFORMATION_SERVICE_UUID (uint16_t) 0x180A
-#define MANUFACTURER_NAME_STRING_CHAR_UUID (uint16_t) 0x2A29
-#define MODEL_NUMBER_STRING_CHAR_UUID (uint16_t) 0x2A24
-#define FIRMWARE_REVISION_STRING_CHAR_UUID (uint16_t) 0x2A26
-#define HARDWARE_REVISION_STRING_CHAR_UUID (uint16_t) 0x2A27
-#define SERIAL_NUMBER_STRING_CHAR_UUID (uint16_t) 0x2A25
-
 // Main Friend Service - using config.h UUIDs
 static BLEUUID serviceUUID(OMI_SERVICE_UUID);
 static BLEUUID photoDataUUID(PHOTO_DATA_UUID);
@@ -60,6 +54,7 @@ static BLEUUID otaDataUUID(OTA_DATA_UUID);
 
 // Camera Control UUID
 static BLEUUID cameraControlUUID(CAMERA_CONTROL_UUID);
+static BLEUUID streamStatusUUID(STREAM_STATUS_UUID);
 
 // Characteristics
 BLECharacteristic *photoDataCharacteristic;
@@ -70,6 +65,7 @@ BLECharacteristic *audioCodecCharacteristic;
 BLECharacteristic *otaControlCharacteristic;
 BLECharacteristic *otaDataCharacteristic;
 BLECharacteristic *cameraControlCharacteristic;
+BLECharacteristic *streamStatusCharacteristic;
 
 // Audio state
 bool audioEnabled = true;
@@ -81,7 +77,7 @@ bool connected = false;
 bool isCapturingPhotos = false;
 int captureInterval = 0; // Interval in ms
 unsigned long lastCaptureTime = 0;
-bool singleShotPending = false; // High-priority single shot
+bool singleShotPending = false;     // High-priority single shot
 unsigned long captureRequestMs = 0; // Timestamp when capture was requested (for latency measurement)
 bool liveStreamActive = false;
 unsigned long liveStreamInterval = 1500;
@@ -124,6 +120,8 @@ void onMicData(int16_t *data, size_t samples);
 void onOpusEncoded(uint8_t *data, size_t len);
 void processAudioTx();
 void broadcastAudioPacket(uint8_t *data, size_t len);
+
+void notifyStreamStatus();
 
 // -------------------------------------------------------------------------
 // Button ISR
@@ -175,7 +173,11 @@ void updateLED()
 
     case LED_NORMAL_OPERATION:
     default:
-        if (connected) {
+        if (streamer_is_running()) {
+            // Streaming - rapid blink (200ms on/off)
+            int blinkPhase = (now / 200) % 2;
+            digitalWrite(STATUS_LED_PIN, blinkPhase ? HIGH : LOW);
+        } else if (connected) {
             // Connected - LED solid ON
             digitalWrite(STATUS_LED_PIN, LOW);
         } else {
@@ -272,8 +274,8 @@ void exitPowerSave()
 
 void enableLightSleep()
 {
-    if (!lightSleepEnabled || !connected || photoDataUploading) {
-        return; // Don't sleep if disabled, not connected, or uploading
+    if (!lightSleepEnabled || !connected || photoDataUploading || streamer_is_running()) {
+        return; // Don't sleep if disabled, not connected, uploading, or streaming
     }
 
     unsigned long now = millis();
@@ -313,6 +315,9 @@ void shutdownDevice()
 
     // Stop photo capture
     isCapturingPhotos = false;
+
+    // Stop WiFi streaming
+    streamer_stop();
 
     // Disconnect BLE gracefully
     if (connected) {
@@ -624,12 +629,58 @@ void updateBatteryService()
 }
 
 // -------------------------------------------------------------------------
+// WiFi Scan Task
+// -------------------------------------------------------------------------
+static void wifi_scan_task(void *param)
+{
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    delay(100);
+
+    int n = WiFi.scanNetworks();
+    Serial.printf("[scan] found %d networks\n", n);
+
+    for (int i = 0; i < n && i < 40; i++) {
+        String ssid = WiFi.SSID(i);
+        if (ssid.length() == 0)
+            continue;
+        int rssi = WiFi.RSSI(i);
+
+        uint8_t buf[2 + 1 + 32 + 1];
+        buf[0] = STREAM_SCAN_RESULT;
+        uint8_t ssidLen = min((int) ssid.length(), 32);
+        buf[1] = ssidLen;
+        memcpy(&buf[2], ssid.c_str(), ssidLen);
+        buf[2 + ssidLen] = (uint8_t) (rssi & 0xFF);
+
+        if (streamStatusCharacteristic && connected) {
+            streamStatusCharacteristic->setValue(buf, 3 + ssidLen);
+            streamStatusCharacteristic->notify();
+        }
+        delay(30);
+    }
+
+    // Scan done
+    uint8_t done[2] = {STREAM_SCAN_DONE, (uint8_t) n};
+    if (streamStatusCharacteristic && connected) {
+        streamStatusCharacteristic->setValue(done, 2);
+        streamStatusCharacteristic->notify();
+    }
+
+    WiFi.scanDelete();
+    Serial.println("[scan] done");
+    vTaskDelete(NULL);
+}
+
+// -------------------------------------------------------------------------
 // configure_ble()
 // -------------------------------------------------------------------------
 void configure_ble()
 {
     Serial.println("Initializing BLE...");
     BLEDevice::init(BLE_DEVICE_NAME);
+    BLEDevice::setMTU(BLE_MTU_SIZE);
+    Serial.printf("[BLE] device=%s service=%s mtu=%d\n", BLE_DEVICE_NAME, OMI_SERVICE_UUID, BLE_MTU_SIZE);
     BLEServer *server = BLEDevice::createServer();
     server->setCallbacks(new ServerHandler());
 
@@ -637,8 +688,12 @@ void configure_ble()
     BLEService *service = server->createService(serviceUUID);
 
     // Audio Data characteristic (for streaming audio to app)
+    Serial.println("[BLE] creating AUDIO_DATA (19b10001)");
     audioDataCharacteristic = service->createCharacteristic(
         audioDataUUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    if (!audioDataCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
     BLE2902 *audioCcc = new BLE2902();
     audioCcc->setNotifications(true);
     audioCcc->setCallbacks(new AudioCCCDCallback());
@@ -646,21 +701,33 @@ void configure_ble()
     audioDataCharacteristic->setCallbacks(new AudioDataCallback());
 
     // Audio Codec characteristic (tells app which codec we're using)
+    Serial.println("[BLE] creating AUDIO_CODEC (19b10002)");
     audioCodecCharacteristic = service->createCharacteristic(audioCodecUUID, BLECharacteristic::PROPERTY_READ);
+    if (!audioCodecCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
     uint8_t codecId = opus_get_codec_id();
     audioCodecCharacteristic->setValue(&codecId, 1);
 
     // Photo Data characteristic
+    Serial.println("[BLE] creating PHOTO_DATA (19b10005)");
     photoDataCharacteristic = service->createCharacteristic(
         photoDataUUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    if (!photoDataCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
     BLE2902 *ccc = new BLE2902();
     ccc->setNotifications(true);
     photoDataCharacteristic->addDescriptor(ccc);
 
     // Photo Control characteristic
+    Serial.println("[BLE] creating PHOTO_CONTROL (19b10006)");
     photoControlCharacteristic = service->createCharacteristic(
         photoControlUUID,
         BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY);
+    if (!photoControlCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
     photoControlCharacteristic->setCallbacks(new PhotoControlCallback());
     BLE2902 *photoControlCcc = new BLE2902();
     photoControlCcc->setNotifications(true);
@@ -669,13 +736,35 @@ void configure_ble()
     photoControlCharacteristic->setValue(photoControlStatus, sizeof(photoControlStatus));
 
     // Camera Control characteristic (for live camera tuning from debug UI)
+    Serial.println("[BLE] creating CAMERA_CONTROL (19b10007)");
     cameraControlCharacteristic = service->createCharacteristic(cameraControlUUID, BLECharacteristic::PROPERTY_WRITE);
+    if (!cameraControlCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
     cameraControlCharacteristic->setCallbacks(new CameraControlCallback());
 
+    // Stream Status characteristic (for WiFi streaming status)
+    Serial.println("[BLE] creating STREAM_STATUS (19b10008)");
+    streamStatusCharacteristic = service->createCharacteristic(
+        streamStatusUUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    if (!streamStatusCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
+    BLE2902 *streamCcc = new BLE2902();
+    streamCcc->setNotifications(true);
+    streamStatusCharacteristic->addDescriptor(streamCcc);
+    uint8_t streamStatus[] = {STREAM_STATUS_IDLE};
+    streamStatusCharacteristic->setValue(streamStatus, sizeof(streamStatus));
+
     // Battery Service
+    Serial.println("[BLE] creating battery service (0x180F)");
     BLEService *batteryService = server->createService(BATTERY_SERVICE_UUID);
+    Serial.println("[BLE] creating battery level (0x2A19)");
     batteryLevelCharacteristic = batteryService->createCharacteristic(
         BATTERY_LEVEL_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    if (!batteryLevelCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
     BLE2902 *batteryCcc = new BLE2902();
     batteryCcc->setNotifications(true);
     batteryLevelCharacteristic->addDescriptor(batteryCcc);
@@ -685,41 +774,26 @@ void configure_ble()
     uint8_t initialBatteryLevel = (uint8_t) batteryPercentage;
     batteryLevelCharacteristic->setValue(&initialBatteryLevel, 1);
 
-    // Device Information Service
-    BLEService *deviceInfoService = server->createService(DEVICE_INFORMATION_SERVICE_UUID);
-    BLECharacteristic *manufacturerNameCharacteristic =
-        deviceInfoService->createCharacteristic(MANUFACTURER_NAME_STRING_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
-    BLECharacteristic *modelNumberCharacteristic =
-        deviceInfoService->createCharacteristic(MODEL_NUMBER_STRING_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
-    BLECharacteristic *firmwareRevisionCharacteristic =
-        deviceInfoService->createCharacteristic(FIRMWARE_REVISION_STRING_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
-    BLECharacteristic *hardwareRevisionCharacteristic =
-        deviceInfoService->createCharacteristic(HARDWARE_REVISION_STRING_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
-    BLECharacteristic *serialNumberCharacteristic =
-        deviceInfoService->createCharacteristic(SERIAL_NUMBER_STRING_CHAR_UUID, BLECharacteristic::PROPERTY_READ);
-
-    manufacturerNameCharacteristic->setValue(MANUFACTURER_NAME);
-    modelNumberCharacteristic->setValue(BLE_DEVICE_NAME);
-    firmwareRevisionCharacteristic->setValue(FIRMWARE_VERSION_STRING);
-    hardwareRevisionCharacteristic->setValue(HARDWARE_REVISION);
-
-    // Generate serial number from ESP32 chip ID
-    uint64_t chipId = ESP.getEfuseMac();
-    char serialNumber[17];
-    snprintf(serialNumber, sizeof(serialNumber), "%04X%08X", (uint16_t) (chipId >> 32), (uint32_t) chipId);
-    serialNumberCharacteristic->setValue(serialNumber);
-
     // OTA Service
+    Serial.println("[BLE] creating OTA service (19b10010)");
     BLEService *otaService = server->createService(otaServiceUUID);
 
     // OTA Control characteristic (for receiving commands and reading status)
+    Serial.println("[BLE] creating OTA_CONTROL (19b10011)");
     otaControlCharacteristic = otaService->createCharacteristic(
         otaControlUUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+    if (!otaControlCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
     otaControlCharacteristic->setCallbacks(new OTAControlCallback());
 
     // OTA Data characteristic (for progress notifications)
+    Serial.println("[BLE] creating OTA_DATA (19b10012)");
     otaDataCharacteristic = otaService->createCharacteristic(
         otaDataUUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    if (!otaDataCharacteristic) {
+        Serial.println("[BLE] FAILED - nullptr!");
+    }
     BLE2902 *otaCcc = new BLE2902();
     otaCcc->setNotifications(true);
     otaDataCharacteristic->addDescriptor(otaCcc);
@@ -730,14 +804,18 @@ void configure_ble()
     // Start services
     service->start();
     batteryService->start();
-    deviceInfoService->start();
     otaService->start();
 
     // Start advertising
     BLEAdvertising *advertising = BLEDevice::getAdvertising();
-    // Note: service UUID and name together (18+11=29 bytes + 3 flags = 32 bytes)
-    // exceed the 31-byte BLE advertising limit. We put the name in the
-    // advertisement (so Web Bluetooth can find it) and the UUID in scan response.
+    BLEAdvertisementData advertisementData;
+    advertisementData.setFlags(ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT);
+    advertisementData.setName(BLE_DEVICE_NAME);
+    advertising->setAdvertisementData(advertisementData);
+
+    BLEAdvertisementData scanResponseData;
+    scanResponseData.setCompleteServices(serviceUUID);
+    advertising->setScanResponseData(scanResponseData);
     advertising->setScanResponse(true);
     advertising->setMinPreferred(BLE_ADV_MIN_INTERVAL);
     advertising->setMaxPreferred(BLE_ADV_MAX_INTERVAL);
@@ -749,6 +827,7 @@ void configure_ble()
 // -------------------------------------------------------------------------
 // Camera
 // -------------------------------------------------------------------------
+static uint16_t s_capture_seq = 0;
 bool take_photo()
 {
     // Release previous buffer
@@ -758,13 +837,26 @@ bool take_photo()
         fb = nullptr;
     }
 
+    // Flush camera FIFO: discard one stale frame, then capture a fresh one
+    {
+        camera_fb_t *stale = esp_camera_fb_get();
+        if (stale) {
+            esp_camera_fb_return(stale);
+        }
+    }
+
     Serial.println("Capturing photo...");
     fb = esp_camera_fb_get();
     if (!fb) {
         Serial.println("Failed to get camera frame buffer!");
         return false;
     }
-    Serial.print("Photo captured: ");
+    s_capture_seq++;
+    Serial.print("[DIAG] capture #");
+    Serial.print(s_capture_seq);
+    Serial.print(" fb=0x");
+    Serial.print((uint32_t) fb, HEX);
+    Serial.print(" len=");
     Serial.print(fb->len);
     Serial.println(" bytes.");
 
@@ -792,6 +884,31 @@ void notifyPhotoControlStatus(uint8_t mode, uint16_t intervalSeconds)
     }
 }
 
+void notifyStreamStatus()
+{
+    if (streamStatusCharacteristic == nullptr) {
+        return;
+    }
+    int status = streamer_get_status();
+    if (status == STREAM_STATUS_CONNECTED) {
+        String ip = streamer_get_ip();
+        uint8_t buf[18];
+        buf[0] = (uint8_t) status;
+        size_t ipLen = ip.length();
+        if (ipLen > 16)
+            ipLen = 16;
+        memcpy(&buf[1], ip.c_str(), ipLen);
+        buf[1 + ipLen] = 0;
+        streamStatusCharacteristic->setValue(buf, 2 + ipLen);
+    } else {
+        uint8_t s = (uint8_t) status;
+        streamStatusCharacteristic->setValue(&s, 1);
+    }
+    if (connected) {
+        streamStatusCharacteristic->notify();
+    }
+}
+
 void handlePhotoControl(const uint8_t *data, size_t len)
 {
     if (len == 0) {
@@ -813,7 +930,7 @@ void handlePhotoControl(const uint8_t *data, size_t len)
         notifyPhotoControlStatus(PHOTO_STATUS_STOPPED, 0);
         return;
     }
-    if (len == 1 && data[0] >= 5 && data[0] <= 127) {
+    if (len == 1 && data[0] >= 1 && data[0] <= 127) {
         Serial.print("Received command: Start interval capture with parameter ");
         Serial.println(data[0]);
         captureInterval = data[0] * 1000;
@@ -831,7 +948,9 @@ void handlePhotoControl(const uint8_t *data, size_t len)
     uint8_t command = data[0];
     uint16_t intervalSeconds = data[1] | (data[2] << 8);
     if (command == PHOTO_CMD_SINGLE) {
-        // High-priority single shot - bypasses photoDataUploading gate
+        // Ignore if a photo is already being uploaded
+        if (photoDataUploading)
+            return;
         singleShotPending = true;
         notifyPhotoControlStatus(PHOTO_STATUS_SINGLE, 0);
     } else if (command == PHOTO_CMD_STOP) {
@@ -840,7 +959,7 @@ void handlePhotoControl(const uint8_t *data, size_t len)
         liveStreamActive = false;
         singleShotPending = false;
         notifyPhotoControlStatus(PHOTO_STATUS_STOPPED, 0);
-    } else if (command == PHOTO_CMD_INTERVAL && intervalSeconds >= 5 && intervalSeconds <= 300) {
+    } else if (command == PHOTO_CMD_INTERVAL && intervalSeconds >= 1 && intervalSeconds <= 300) {
         liveStreamActive = false;
         captureInterval = intervalSeconds * 1000;
         isCapturingPhotos = true;
@@ -853,22 +972,27 @@ void handlePhotoControl(const uint8_t *data, size_t len)
             // Save current quality for restoration
             savedQuality = 12;
             // Set live stream parameters
-            framesize_t fs = (framesize_t)data[2];
+            framesize_t fs = (framesize_t) data[2];
             if (fs <= FRAMESIZE_UXGA) {
                 sensor_t *s = esp_camera_sensor_get();
-                if (s) s->set_framesize(s, fs);
+                if (s)
+                    s->set_framesize(s, fs);
             }
             uint8_t q = data[3];
             if (q >= 10 && q <= 63) {
                 sensor_t *s = esp_camera_sensor_get();
-                if (s) s->set_quality(s, q);
+                if (s)
+                    s->set_quality(s, q);
             }
             liveStreamInterval = data[4] | (data[5] << 8);
-            if (liveStreamInterval < 500) liveStreamInterval = 500; // Min 500ms
-            if (liveStreamInterval > 10000) liveStreamInterval = 10000; // Max 10s
+            if (liveStreamInterval < 500)
+                liveStreamInterval = 500; // Min 500ms
+            if (liveStreamInterval > 10000)
+                liveStreamInterval = 10000; // Max 10s
             lastCaptureTime = millis() - liveStreamInterval;
             notifyPhotoControlStatus(PHOTO_STATUS_LIVE, 0);
-            Serial.printf("Live stream started: framesize=%d quality=%d interval=%ums\n", data[2], q, liveStreamInterval);
+            Serial.printf(
+                "Live stream started: framesize=%d quality=%d interval=%ums\n", data[2], q, liveStreamInterval);
         } else {
             Serial.println("Live stream stopped");
             notifyPhotoControlStatus(PHOTO_STATUS_STOPPED, 0);
@@ -886,6 +1010,35 @@ void handlePhotoControl(const uint8_t *data, size_t len)
         savedQuality = restoreQuality;
         notifyPhotoControlStatus(PHOTO_STATUS_SINGLE, 0);
         Serial.println("Hi-res capture requested (quality=8)");
+    } else if (command == STREAM_CMD_CONNECT_WIFI && len >= 4) {
+        // Format: [0x06, ssid_len, ssid..., pass_len, pass...]
+        uint8_t ssidLen = data[1];
+        if (ssidLen > WIFI_MAX_SSID_LEN || ssidLen + 2 >= len) {
+            Serial.println("Stream: invalid SSID length");
+            return;
+        }
+        uint8_t passLen = data[2 + ssidLen];
+        if (passLen > WIFI_MAX_PASS_LEN || 3 + ssidLen + passLen > len) {
+            Serial.println("Stream: invalid password length");
+            return;
+        }
+        char ssid[WIFI_MAX_SSID_LEN + 1];
+        char pass[WIFI_MAX_PASS_LEN + 1];
+        memcpy(ssid, &data[2], ssidLen);
+        ssid[ssidLen] = 0;
+        memcpy(pass, &data[3 + ssidLen], passLen);
+        pass[passLen] = 0;
+
+        Serial.printf("Stream: connecting to WiFi SSID=%s\n", ssid);
+        streamer_start(ssid, pass);
+        notifyStreamStatus();
+    } else if (command == STREAM_CMD_DISCONNECT) {
+        Serial.println("Stream: disconnect requested");
+        streamer_stop();
+        notifyStreamStatus();
+    } else if (command == STREAM_CMD_SCAN) {
+        Serial.println("Stream: WiFi scan requested");
+        xTaskCreate(wifi_scan_task, "wifi_scan", 8192, NULL, 1, NULL);
     } else {
         Serial.printf("PhotoControl: invalid command=0x%02x interval=%u\n", command, intervalSeconds);
     }
@@ -1090,15 +1243,15 @@ void configure_camera()
             s->set_quality(s, CAMERA_JPEG_QUALITY);
             s->set_brightness(s, 0);
             s->set_contrast(s, 0);
-            s->set_saturation(s, 0);
+            s->set_saturation(s, 1);
             s->set_ae_level(s, 0);
-            s->set_aec_value(s, 300);
+            s->set_aec_value(s, 500);
             s->set_whitebal(s, 1);
             s->set_awb_gain(s, 1);
             s->set_gain_ctrl(s, 1);
             s->set_exposure_ctrl(s, 1);
             s->set_agc_gain(s, 0);
-            s->set_gainceiling(s, GAINCEILING_2X);
+            s->set_gainceiling(s, GAINCEILING_4X);
             s->set_bpc(s, 0);
             s->set_wpc(s, 1);
             s->set_raw_gma(s, 1);
@@ -1287,31 +1440,22 @@ void loop_app()
     // Log BLE transfer start once per photo
     static unsigned long bleTransferStart = 0;
 
-    // If uploading, send chunks over BLE (interleave with audio - max 2 chunks per loop)
-    static int photo_chunks_this_loop = 0;
-    if (photoDataUploading && fb && photo_chunks_this_loop < 2) {
+    // If uploading, send all remaining chunks immediately
+    if (photoDataUploading && fb) {
         if (bleTransferStart == 0) {
-            bleTransferStart = micros(); // Start of BLE xfer for this photo
-        }
-        // Yield to audio if audio buffer has data
-        if (audioSubscribed && audio_tx_read_pos != audio_tx_write_pos) {
-            photo_chunks_this_loop = 0; // Reset for next loop
-        } else {
-            photo_chunks_this_loop++;
+            bleTransferStart = micros();
         }
         size_t remaining = fb->len - sent_photo_bytes;
-        if (remaining > 0) {
+        while (remaining > 0) {
             size_t bytes_to_copy;
             if (sent_photo_frames == 0) {
-                // First chunk: includes orientation metadata
-                s_compressed_frame_2[0] = 0; // Frame index low byte
-                s_compressed_frame_2[1] = 0; // Frame index high byte
+                s_compressed_frame_2[0] = 0;
+                s_compressed_frame_2[1] = 0;
                 s_compressed_frame_2[2] = (uint8_t) current_photo_orientation;
                 bytes_to_copy = (remaining > BLE_CHUNK_SIZE - 1) ? BLE_CHUNK_SIZE - 1 : remaining;
                 memcpy(&s_compressed_frame_2[3], &fb->buf[sent_photo_bytes], bytes_to_copy);
                 photoDataCharacteristic->setValue(s_compressed_frame_2, bytes_to_copy + 3);
             } else {
-                // Subsequent chunks
                 s_compressed_frame_2[0] = (uint8_t) (sent_photo_frames & 0xFF);
                 s_compressed_frame_2[1] = (uint8_t) ((sent_photo_frames >> 8) & 0xFF);
                 bytes_to_copy = (remaining > BLE_CHUNK_SIZE) ? BLE_CHUNK_SIZE : remaining;
@@ -1319,41 +1463,34 @@ void loop_app()
                 photoDataCharacteristic->setValue(s_compressed_frame_2, bytes_to_copy + 2);
             }
             photoDataCharacteristic->notify();
+            delay(5);
 
             sent_photo_bytes += bytes_to_copy;
             sent_photo_frames++;
+            remaining = fb->len - sent_photo_bytes;
 
-            Serial.print("Uploading chunk ");
-            Serial.print(sent_photo_frames);
-            Serial.print(" (");
-            Serial.print(bytes_to_copy);
-            Serial.print(" bytes), ");
-            Serial.print(remaining - bytes_to_copy);
-            Serial.println(" bytes remaining.");
-
-            lastActivity = now; // Register activity
-        } else {
-            // End of photo marker
-            s_compressed_frame_2[0] = 0xFF;
-            s_compressed_frame_2[1] = 0xFF;
-            photoDataCharacteristic->setValue(s_compressed_frame_2, 2);
-            photoDataCharacteristic->notify();
-            unsigned long bleElapsed = micros() - bleTransferStart;
-            Serial.print("Photo BLE transfer latency: ");
-            Serial.print(bleElapsed);
-            Serial.println(" us");
-            bleTransferStart = 0;
-            Serial.println("Photo upload complete.");
-
-            photoDataUploading = false;
-            // Free camera buffer
-            esp_camera_fb_return(fb);
-            fb = nullptr;
-            Serial.println("Camera frame buffer freed.");
-            photo_chunks_this_loop = 0; // Reset counter
+            lastActivity = now;
         }
-    } else {
-        photo_chunks_this_loop = 0; // Reset when not uploading
+
+        delay(5);
+
+        // End of photo marker
+        s_compressed_frame_2[0] = 0xFF;
+        s_compressed_frame_2[1] = 0xFF;
+        photoDataCharacteristic->setValue(s_compressed_frame_2, 2);
+        photoDataCharacteristic->notify();
+        unsigned long bleElapsed = micros() - bleTransferStart;
+        bleTransferStart = 0;
+
+        Serial.print("[DIAG] upload done: seq=");
+        Serial.print(s_capture_seq);
+        Serial.print(" chunks=");
+        Serial.print(sent_photo_frames);
+        Serial.print(" bytes=");
+        Serial.println(sent_photo_bytes);
+        photoDataUploading = false;
+        esp_camera_fb_return(fb);
+        fb = nullptr;
     }
 
     // Light sleep optimization - major power savings while maintaining BLE

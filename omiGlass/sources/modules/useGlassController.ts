@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { getOmiService } from './bluetoothProtocol';
+import { runGattOperation, writeGattValue } from './gattQueue';
 import { rotateImage } from './imaging';
 import { scanLocalWifi } from './localWifi';
 import {
@@ -59,11 +60,14 @@ function frameStages(startedAt: number): FrameRecord['stages'] {
     ];
 }
 
-async function startNotificationsWithRetry(characteristic: BluetoothRemoteGATTCharacteristic): Promise<void> {
+async function startNotificationsWithRetry(
+    device: BluetoothRemoteGATTServer,
+    characteristic: BluetoothRemoteGATTCharacteristic,
+): Promise<void> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-            await characteristic.startNotifications();
+            await runGattOperation(device, () => characteristic.startNotifications());
             return;
         } catch (error) {
             lastError = error;
@@ -125,26 +129,33 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
                 assembler = new PhotoAssembler(true);
 
                 try {
-                    const batteryService = await device.getPrimaryService(0x180f);
-                    const batteryValue = await (await batteryService.getCharacteristic(0x2a19)).readValue();
+                    const batteryService = await runGattOperation(device, () => device.getPrimaryService(0x180f));
+                    const batteryCharacteristic = await runGattOperation(device, () => batteryService.getCharacteristic(0x2a19));
+                    const batteryValue = await runGattOperation(device, () => batteryCharacteristic.readValue());
                     setInfo(current => ({ ...current, battery: batteryValue.getUint8(0) }));
                 } catch (error) {
                     log('warn', `电量服务不可用：${String(error)}`);
                 }
+                if (disposed) {
+                    return;
+                }
 
                 const service = await getOmiService(device);
-                const discoveredCharacteristics = await service.getCharacteristics();
+                const discoveredCharacteristics = await runGattOperation(device, () => service.getCharacteristics());
+                if (disposed) {
+                    return;
+                }
                 log('info', `[DIAG] GATT TABLE: ${discoveredCharacteristics.map(item => item.uuid).join(', ')}`);
 
                 try {
-                    photoCharacteristic = await service.getCharacteristic(PHOTO_DATA_UUID);
+                    photoCharacteristic = await runGattOperation(device, () => service.getCharacteristic(PHOTO_DATA_UUID));
                     log('info', '[DIAG] PHOTO_DATA (19b10005) FOUND');
                 } catch (e) {
                     log('error', `[DIAG] PHOTO_DATA (19b10005) NOT FOUND: ${e}`);
                 }
 
                 try {
-                    controlCharacteristic = await service.getCharacteristic(PHOTO_CONTROL_UUID);
+                    controlCharacteristic = await runGattOperation(device, () => service.getCharacteristic(PHOTO_CONTROL_UUID));
                     log('info', '[DIAG] PHOTO_CONTROL (19b10006) FOUND');
                 } catch (e) {
                     log('warn', `[DIAG] PHOTO_CONTROL (19b10006) NOT FOUND: ${e}`);
@@ -201,7 +212,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
                     }) as EventListener;
                     photoCharacteristic.addEventListener('characteristicvaluechanged', photoListener);
                     try {
-                        await startNotificationsWithRetry(photoCharacteristic);
+                        await startNotificationsWithRetry(device, photoCharacteristic);
                         setSubscribed(true);
                         log('info', '照片通知通道已就绪。');
                     } catch (error) {
@@ -224,8 +235,9 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
                     }) as EventListener;
                     controlCharacteristic.addEventListener('characteristicvaluechanged', controlListener);
                     try {
-                        await startNotificationsWithRetry(controlCharacteristic);
-                        const currentStatus = decodeCaptureStatus(new Uint8Array((await controlCharacteristic.readValue()).buffer));
+                        await startNotificationsWithRetry(device, controlCharacteristic);
+                        const currentValue = await runGattOperation(device, () => controlCharacteristic!.readValue());
+                        const currentStatus = decodeCaptureStatus(new Uint8Array(currentValue.buffer));
                         if (currentStatus) {
                             setCapture({ ...currentStatus, pending: false });
                         }
@@ -236,7 +248,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
 
                 // Subscribe to stream status
                 try {
-                    streamCharacteristic = await service.getCharacteristic(STREAM_STATUS_UUID);
+                    streamCharacteristic = await runGattOperation(device, () => service.getCharacteristic(STREAM_STATUS_UUID));
                     log('info', '[DIAG] STREAM_STATUS (19b10008) FOUND');
                     streamListener = ((event: Event) => {
                         const value = (event.target as BluetoothRemoteGATTCharacteristic).value;
@@ -270,10 +282,11 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
                         }
                     }) as EventListener;
                     streamCharacteristic.addEventListener('characteristicvaluechanged', streamListener);
-                    await startNotificationsWithRetry(streamCharacteristic);
+                    await startNotificationsWithRetry(device, streamCharacteristic);
                     // Also try to read current state
                     try {
-                        const initial = decodeStreamStatus(new Uint8Array((await streamCharacteristic.readValue()).buffer));
+                        const initialValue = await runGattOperation(device, () => streamCharacteristic!.readValue());
+                        const initial = decodeStreamStatus(new Uint8Array(initialValue.buffer));
                         if (initial) setStream(initial);
                     } catch { /* ignore */ }
                 } catch (e) {
@@ -296,15 +309,15 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
             assembler?.reset();
             if (photoCharacteristic && photoListener) {
                 photoCharacteristic.removeEventListener('characteristicvaluechanged', photoListener);
-                void photoCharacteristic.stopNotifications().catch(() => undefined);
+                void runGattOperation(device, () => photoCharacteristic!.stopNotifications()).catch(() => undefined);
             }
             if (controlCharacteristic && controlListener) {
                 controlCharacteristic.removeEventListener('characteristicvaluechanged', controlListener);
-                void controlCharacteristic.stopNotifications().catch(() => undefined);
+                void runGattOperation(device, () => controlCharacteristic!.stopNotifications()).catch(() => undefined);
             }
             if (streamCharacteristic && streamListener) {
                 streamCharacteristic.removeEventListener('characteristicvaluechanged', streamListener);
-                void streamCharacteristic.stopNotifications().catch(() => undefined);
+                void runGattOperation(device, () => streamCharacteristic!.stopNotifications()).catch(() => undefined);
             }
         };
     }, [device, log]);
@@ -314,7 +327,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
         fallback: Pick<CaptureState, 'mode' | 'intervalSeconds'>,
     ) => {
         const characteristic = controlRef.current;
-        if (!characteristic) {
+        if (!device || !characteristic) {
             setCapture(current => ({ ...current, pending: false, error: '设备采集通道尚未就绪。' }));
             return;
         }
@@ -322,14 +335,14 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
         try {
             captureCommandSentAt.current = Date.now();
             log('info', `发送采集命令：${Array.from(command).map(value => value.toString(16).padStart(2, '0')).join(' ')}`);
-            await characteristic.writeValue(command);
+            await writeGattValue(device, characteristic, command);
             setCapture({ ...fallback, pending: false });
             log('info', `采集模式切换为 ${fallback.mode}${fallback.mode === 'interval' ? ` / ${fallback.intervalSeconds}s` : ''}`);
         } catch (error) {
             setCapture(current => ({ ...current, pending: false, error: String(error) }));
             log('error', `采集命令失败：${String(error)}`);
         }
-    }, [log]);
+    }, [device, log]);
 
     const toggleLiveStream = React.useCallback((
         active: boolean,
@@ -352,30 +365,34 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
 
     const connectWifi = React.useCallback(async (ssid: string, password: string) => {
         const characteristic = controlRef.current;
-        if (!characteristic) {
+        if (!device || !characteristic) {
             log('error', 'WiFi 写入失败：眼镜缺少 PHOTO_CONTROL (19b10006)，请更新固件后重新连接。');
             return;
         }
         try {
             log('info', `WiFi: 正在连接 ${ssid}...`);
             const cmd = encodeStreamConnectWifi(ssid, password);
-            await characteristic.writeValue(cmd);
+            if (cmd.byteLength > 509) {
+                throw new Error('WiFi 凭据超过 BLE 写入上限。');
+            }
+            await writeGattValue(device, characteristic, cmd);
+            setStream({ status: 0x51, ip: '' });
         } catch (error) {
             log('error', `WiFi 连接命令发送失败: ${String(error)}`);
         }
-    }, [log]);
+    }, [device, log]);
 
     const disconnectWifi = React.useCallback(async () => {
         const characteristic = controlRef.current;
-        if (!characteristic) return;
+        if (!device || !characteristic) return;
         try {
-            await characteristic.writeValue(encodeStreamDisconnect());
+            await writeGattValue(device, characteristic, encodeStreamDisconnect());
             setStream({ status: 0, ip: '' });
             log('info', 'WiFi: 断开连接');
         } catch (error) {
             log('error', `WiFi 断开命令发送失败: ${String(error)}`);
         }
-    }, [log]);
+    }, [device, log]);
 
     const scanNetworks = React.useCallback(async () => {
         setScanResults([]);
@@ -393,7 +410,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
         }
 
         const characteristic = controlRef.current;
-        if (!characteristic) {
+        if (!device || !characteristic) {
             const message = '无法扫描：本机扫描服务不可用，且眼镜固件缺少 PHOTO_CONTROL (19b10006)。';
             setScanError(message);
             setScanning(false);
@@ -401,7 +418,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
             return;
         }
         try {
-            await characteristic.writeValue(encodeScanNetworks());
+            await writeGattValue(device, characteristic, encodeScanNetworks());
             log('info', '已通过眼镜发起 WiFi 扫描');
         } catch (error) {
             const message = `眼镜 WiFi 扫描命令发送失败：${String(error)}`;
@@ -410,7 +427,7 @@ export function useGlassController({ device, onFrame }: GlassControllerOptions) 
             setScanning(false);
         }
         setTimeout(() => setScanning(false), 15000);
-    }, [log]);
+    }, [device, log]);
 
     return {
         subscribed,
